@@ -1,0 +1,25 @@
+# Secrets & API Keys
+.env
+*.env
+flipkart_cookies.txt
+config.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# Local state & logs
+seen_deals.json
+ignored_deals.json
+*.log
+schedule.json
+
+# macOS
+.DS_Store

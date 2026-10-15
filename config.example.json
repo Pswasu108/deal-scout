@@ -1,0 +1,53 @@
+{
+  "flipkart_cookies": "",
+  "min_discount_pct": 30,
+  "max_price": 15000,
+  "min_price": 1500,
+  "max_products": 80,
+  "watchlist": {
+    "brands": [
+      "Nike",
+      "Adidas",
+      "Puma",
+      "Adidas Originals",
+      "asics",
+      "new balance"
+    ],
+    "target_sizes": [
+      "9",
+      "10",
+      "11",
+      "L",
+      "XL",
+      "M"
+    ]
+  },
+  "search_queries": [
+    {
+      "query": "running shoes",
+      "min_discount_pct": 30,
+      "min_price": 3000,
+      "max_price": 15000,
+      "max_products": 80
+    }
+  ],
+  "manually_tracked_deals": [],
+  "notifications": {
+    "telegram": {
+      "enabled": false,
+      "bot_token": "YOUR_BOT_TOKEN_HERE",
+      "chat_id": "YOUR_CHAT_ID_HERE"
+    },
+    "macos_notify": {
+      "enabled": true
+    }
+  },
+  "scraper": {
+    "request_delay_sec": 3,
+    "max_retries": 3,
+    "timeout_sec": 20,
+    "use_playwright": true,
+    "fetch_wow_price": true,
+    "max_products": 80
+  }
+}

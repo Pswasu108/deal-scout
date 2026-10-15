@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>⚡ ShopExpert — Deal Radar & Price Hunter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+
+<body>
+  <div class="app-layout">
+    <!-- Top Header Bar -->
+    <header class="app-header">
+      <div class="header-brand">
+        <div class="logo-icon">⚡</div>
+        <div>
+          <div class="brand-title-wrap">
+            <h1 class="brand-title">ShopExpert</h1>
+            <span class="version-tag">PRO</span>
+          </div>
+          <p class="brand-subtitle">Smart Retail Arbitrage & Price Hunter</p>
+        </div>
+      </div>
+
+      <!-- Live Quick Stats -->
+      <div class="header-stats">
+        <div class="stat-pill" id="statTotalDeals">
+          <span class="stat-num" id="statDealsCount">0</span>
+          <span class="stat-label">Deals Stored</span>
+        </div>
+        <div class="stat-pill" id="statAvgDiscount">
+          <span class="stat-num" id="statBestDiscount">0%</span>
+          <span class="stat-label">Max Discount</span>
+        </div>
+        <div class="stat-pill" id="statIgnoredPill" title="Listings currently on skip/ignore list">
+          <span class="stat-num" id="statIgnoredCount">0</span>
+          <span class="stat-label">Ignored / Skipped</span>
+        </div>
+        <div class="stat-pill" id="statSchedule">
+          <span class="status-dot" id="schedDot"></span>
+          <span class="stat-num" id="schedStatusText">Disabled</span>
+          <span class="stat-label" id="schedCountdownText">Scheduler</span>
+        </div>
+      </div>
+
+      <!-- Quick Action Controls -->
+      <div class="header-actions">
+        <div class="theme-selector-wrap">
+          <span class="theme-icon">🎨</span>
+          <select id="themeSelector" class="theme-select" title="Switch color theme">
+            <option value="midnight">Midnight Cyan</option>
+            <option value="emerald">Emerald Forest</option>
+            <option value="amber">Amber Flame</option>
+            <option value="purple">Royal Violet</option>
+            <option value="obsidian">Obsidian Crimson</option>
+          </select>
+        </div>
+
+        <div class="header-scraper-toggles">
+          <label class="scraper-chip" title="Toggle Flipkart scraper">
+            <input type="checkbox" id="headerScraperFlipkart" value="flipkart" checked>
+            <span class="chip-label">Flipkart</span>
+          </label>
+          <label class="scraper-chip" title="Toggle Myntra scraper">
+            <input type="checkbox" id="headerScraperMyntra" value="myntra" checked>
+            <span class="chip-label">Myntra</span>
+          </label>
+          <label class="scraper-chip" title="Toggle TataCLiQ scraper">
+            <input type="checkbox" id="headerScraperTataCliq" value="tatacliq" checked>
+            <span class="chip-label">TataCLiQ</span>
+          </label>
+        </div>
+        <label class="dry-run-toggle" title="Run scanner without sending notifications">
+          <input type="checkbox" id="headerDryRun" checked>
+          <span class="checkbox-custom"></span>
+          <span class="toggle-label">Dry Run</span>
+        </label>
+        <button id="btnHeaderRun" class="btn btn-primary btn-run">
+          <span class="btn-spinner" id="runSpinner"></span>
+          <span class="btn-icon" id="runIcon">⚡</span>
+          <span id="runButtonText">Run Now</span>
+        </button>
+        <button id="btnHeaderAbort" class="btn btn-abort" style="display: none;"
+          title="Abort scanning and dump collected deals to seen_deals">
+          <span class="btn-spinner" id="abortSpinner" style="display: none;"></span>
+          <span class="btn-icon" id="abortIcon">🛑</span>
+          <span id="abortButtonText">Abort & Dump</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- Main Navigation Bar -->
+    <nav class="nav-tabs" role="tablist">
+      <button class="nav-tab active" data-tab="deals" id="tab-deals">
+        <span class="tab-icon">🏷️</span>
+        <span class="tab-text">Deals Explorer</span>
+        <span class="badge" id="tabDealsBadge">0</span>
+      </button>
+      <button class="nav-tab" data-tab="agent" id="tab-agent">
+        <span class="tab-icon">🤖</span>
+        <span class="tab-text">Agent Scout</span>
+        <span class="badge" id="tabAgentBadge" style="background: rgba(56, 189, 248, 0.25); color: #38bdf8;">AI</span>
+      </button>
+      <button class="nav-tab" data-tab="config" id="tab-config">
+        <span class="tab-icon">⚙️</span>
+        <span class="tab-text">Config Editor</span>
+      </button>
+      <button class="nav-tab" data-tab="scheduler" id="tab-scheduler">
+        <span class="tab-icon">⏱️</span>
+        <span class="tab-text">Scheduler</span>
+        <span class="scheduler-indicator-pulse" id="schedTabIndicator"></span>
+      </button>
+      <button class="nav-tab" data-tab="console" id="tab-console">
+        <span class="tab-icon">📟</span>
+        <span class="tab-text">Live Console</span>
+        <span class="pulse-indicator" id="consoleLivePulse"></span>
+      </button>
+    </nav>
+
+    <!-- Content Sections -->
+    <main class="app-main">
+
+      <!-- ── SECTION: AGENT SCOUT ────────────────────────────────────────── -->
+      <section id="panel-agent" class="tab-panel">
+        <div class="agent-hero">
+          <div class="agent-hero-header">
+            <div class="agent-icon-badge">🤖</div>
+            <div>
+              <h2 class="agent-title">Agent Scout & Deal Evaluator</h2>
+              <p class="agent-subtitle">Search with natural language. The agent extracts constraints, runs scrapers, verifies stock & sizes, and judges whether each deal is worth checking out.</p>
+            </div>
+          </div>
+
+          <form id="agentSearchForm" class="agent-search-form">
+            <div class="agent-input-container">
+              <span class="agent-input-icon">✨</span>
+              <input type="text" id="agentInput" class="agent-input" placeholder="e.g. Nike running shoes under 5000, size 10, at least 40% off" autocomplete="off" required>
+              <button type="submit" id="btnAgentSubmit" class="btn btn-primary agent-submit-btn">
+                <span class="btn-spinner" id="agentSpinner" style="display: none;"></span>
+                <span id="agentBtnIcon">🚀</span>
+                <span id="agentBtnText">Ask Agent</span>
+              </button>
+            </div>
+          </form>
+
+          <div class="agent-suggestions">
+            <span class="suggestions-label">Try asking:</span>
+            <button class="agent-chip-btn" data-query="Nike running shoes under 5000, size 10, at least 40% off">👟 Nike running &lt; 5k size 10</button>
+            <button class="agent-chip-btn" data-query="Adidas sneakers under 4000, size 9, 50% discount">🔥 Adidas sneakers &gt; 50% off</button>
+            <button class="agent-chip-btn" data-query="Puma training shoes size 11 under 3000">⚡ Puma training under 3k</button>
+            <button class="agent-chip-btn" data-query="Asics gel running shoes under 6000 size 10">🏃 Asics gel under 6k</button>
+          </div>
+        </div>
+
+        <!-- Agent Pipeline Status (Shown while searching) -->
+        <div id="agentStatusCard" class="agent-status-card" style="display: none;">
+          <div class="agent-status-header">
+            <div class="agent-pulse-dot"></div>
+            <span id="agentStatusTitle" class="agent-status-title">Agent is searching &amp; evaluating...</span>
+          </div>
+          <div class="agent-steps">
+            <div class="agent-step" id="agentStep1">
+              <span class="step-num">1</span>
+              <span class="step-label">Parse Intent</span>
+            </div>
+            <div class="agent-step-arrow">→</div>
+            <div class="agent-step" id="agentStep2">
+              <span class="step-num">2</span>
+              <span class="step-label">Scrape Retailers</span>
+            </div>
+            <div class="agent-step-arrow">→</div>
+            <div class="agent-step" id="agentStep3">
+              <span class="step-num">3</span>
+              <span class="step-label">Judge Value &amp; Sizes</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Agent Results Section -->
+        <div id="agentResultsSection" style="display: none;">
+          <div class="agent-summary-bar">
+            <div class="agent-params-pillbox" id="agentParamsPills"></div>
+            <div class="agent-verdict-filters">
+              <button class="agent-filter-pill active" data-verdict="all" id="af-all">All (<span id="afCountAll">0</span>)</button>
+              <button class="agent-filter-pill steal" data-verdict="STEAL" id="af-steal">🔥 Steals (<span id="afCountSteal">0</span>)</button>
+              <button class="agent-filter-pill worth_it" data-verdict="WORTH_IT" id="af-worth">✓ Worth It (<span id="afCountWorth">0</span>)</button>
+              <button class="agent-filter-pill skip" data-verdict="SKIP" id="af-skip">✗ Skip (<span id="afCountSkip">0</span>)</button>
+            </div>
+          </div>
+
+          <div id="agentDealsContainer" class="deals-grid"></div>
+        </div>
+
+        <div id="agentEmptyState" class="empty-state" style="display: none;">
+          <div class="empty-icon">🤖</div>
+          <h3>No deals evaluated yet</h3>
+          <p>Type what you are looking for above and let the agent search &amp; judge for you.</p>
+        </div>
+      </section>
+
+      <!-- ── SECTION 1: DEALS EXPLORER ────────────────────────────────────── -->
+      <section id="panel-deals" class="tab-panel active">
+        <div class="deals-toolbar">
+          <div class="search-box">
+            <span class="search-icon">🔍</span>
+            <input type="text" id="dealSearchInput" placeholder="Filter deals by brand, title, size...">
+            <button class="clear-search-btn" id="clearSearchBtn" title="Clear filter">✕</button>
+          </div>
+
+          <div class="filter-group">
+            <button id="btnRefreshDeals" class="btn btn-outline" title="Refresh deals from server">
+              🔄 Refresh
+            </button>
+
+            <select id="sourceFilter" class="select-input">
+              <option value="all">All Retailers</option>
+              <option value="flipkart">Flipkart</option>
+              <option value="myntra">Myntra</option>
+              <option value="tatacliq">TataCLiQ</option>
+            </select>
+
+            <select id="sortFilter" class="select-input">
+              <option value="discount_desc">Discount: High → Low</option>
+              <option value="discount_asc">Discount: Low → High</option>
+              <option value="price_asc">Price: Low → High</option>
+              <option value="price_desc">Price: High → Low</option>
+              <option value="name_asc">Name: A → Z</option>
+              <option value="name_desc">Name: Z → A</option>
+              <option value="recent">Recently Scraped</option>
+            </select>
+
+            <select id="genderFilter" class="select-input">
+              <option value="all">All Genders</option>
+              <option value="men">Men</option>
+              <option value="women">Women</option>
+              <option value="unisex">Unisex / Kids</option>
+            </select>
+
+            <select id="verdictFilter" class="select-input" title="Filter by AI Agent Verdict">
+              <option value="all">All Verdicts</option>
+              <option value="STEAL">🔥 Steals Only</option>
+              <option value="WORTH_IT">✓ Worth It</option>
+              <option value="SKIP">✗ Skip</option>
+            </select>
+
+            <button id="btnToggleIgnored" class="btn btn-outline" title="Toggle between Active deals and Ignored list">
+              <span id="btnToggleIgnoredIcon">🚫</span> <span id="btnToggleIgnoredText">Ignored List</span>
+              <span class="badge" id="ignoredBadge"
+                style="margin-left: 4px; background: rgba(239,68,68,0.25); color: #f87171;">0</span>
+            </button>
+
+            <button id="btnClearDeals" class="btn btn-outline-danger" title="Clear saved deals history">
+              🗑️ Clear Deals
+            </button>
+          </div>
+        </div>
+
+        <!-- Ignored Mode Banner -->
+        <div id="ignoredModeBanner" class="ignored-banner" style="display: none;">
+          <div class="ignored-banner-content">
+            <span class="ignored-banner-icon">🚫</span>
+            <div>
+              <strong>Ignored / Skipped Listings</strong>
+              <p>These listings are skipped and will NOT appear in current or subsequent scanner runs. Clearing deals
+                history does not affect this list.</p>
+            </div>
+          </div>
+          <div class="ignored-banner-actions" style="display: flex; gap: 8px; align-items: center;">
+            <button id="btnClearIgnored" class="btn btn-sm btn-outline-danger" title="Clear all ignored listings">🗑️
+              Clear Ignored List</button>
+            <button id="btnExitIgnored" class="btn btn-sm btn-outline">Back to Active Deals</button>
+          </div>
+        </div>
+
+        <!-- Deals Grid -->
+        <div id="dealsContainer" class="deals-grid">
+          <div class="loading-state">
+            <div class="loader-ring"></div>
+            <p>Loading deals...</p>
+          </div>
+        </div>
+
+        <div id="dealsEmptyState" class="empty-state" style="display: none;">
+          <div class="empty-icon">👟</div>
+          <h3>No matching deals found</h3>
+          <p>Run the scanner to discover deals matching your watchlist or clear search filters.</p>
+          <button class="btn btn-primary" onclick="triggerRun(true)">Run Deal Scanner</button>
+        </div>
+      </section>
+
+
+      <!-- ── SECTION 2: CONFIG EDITOR ──────────────────────────────────────── -->
+      <section id="panel-config" class="tab-panel">
+        <div class="config-header">
+          <div class="config-modes">
+            <button class="mode-btn active" id="btnModeForm">Form View</button>
+            <button class="mode-btn" id="btnModeJson">Raw JSON</button>
+          </div>
+          <div class="config-actions">
+            <button id="btnReloadConfig" class="btn btn-outline" title="Reload from disk">↺ Reload</button>
+            <button id="btnSaveConfig" class="btn btn-primary">💾 Save Config</button>
+          </div>
+        </div>
+
+        <!-- Form Mode View -->
+        <div id="configFormView" class="config-view">
+          <div class="config-grid">
+            <!-- Watchlist card -->
+            <div class="config-card">
+              <div class="card-title">
+                <span class="icon">🎯</span> Watchlist Brands & Sizes
+              </div>
+              <div class="form-group">
+                <label>Watchlist Brands (comma-separated)</label>
+                <input type="text" id="cfgBrandsInput" class="text-input" placeholder="Nike, Adidas, Puma, asics">
+                <span class="field-hint">Matches brand field or product title keywords</span>
+              </div>
+              <div class="form-group">
+                <label>Target Sizes (comma-separated)</label>
+                <input type="text" id="cfgSizesInput" class="text-input" placeholder="9, 10, 11, L, XL, 32">
+                <span class="field-hint">Highlighted and filtered against available stock</span>
+              </div>
+            </div>
+
+            <!-- Global Price & Scan Limits -->
+            <div class="config-card">
+              <div class="card-title">
+                <span class="icon">💰</span> Global Price & Scan Limits
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Min Discount %</label>
+                  <input type="number" id="cfgMinDiscount" class="text-input" min="0" max="100">
+                </div>
+                <div class="form-group">
+                  <label>Min Price (₹)</label>
+                  <input type="number" id="cfgMinPrice" class="text-input" min="0" step="100">
+                </div>
+                <div class="form-group">
+                  <label>Max Price (₹)</label>
+                  <input type="number" id="cfgMaxPrice" class="text-input" min="0" step="500">
+                </div>
+                <div class="form-group">
+                  <label>Default Raw Limit</label>
+                  <input type="number" id="cfgMaxProducts" class="text-input" min="40" step="40"
+                    placeholder="40, 80, 120">
+                </div>
+              </div>
+            </div>
+
+            <!-- Search Queries List -->
+            <div class="config-card full-width">
+              <div class="card-title-row">
+                <div>
+                  <div class="card-title"><span class="icon">🔎</span> Search Queries</div>
+                  <span class="field-hint" style="margin-left: 28px;">Configure search queries with optional overrides:
+                    Retailer, Min Disc %, Min Price, Max Price, Raw Limit (e.g. 80, 120)</span>
+                </div>
+                <button type="button" class="btn btn-sm btn-outline" id="btnAddQuery">+ Add Query</button>
+              </div>
+              <div id="queriesListContainer" class="queries-list">
+                <!-- Dynamically generated query rows -->
+              </div>
+            </div>
+
+            <!-- Scraper Settings -->
+            <div class="config-card">
+              <div class="card-title">
+                <span class="icon">🕷️</span> Scraper Engine Settings
+              </div>
+              <div class="form-row">
+                <div class="form-group">
+                  <label>Request Delay (sec)</label>
+                  <input type="number" id="cfgDelay" class="text-input" step="0.5" min="0.5">
+                </div>
+                <div class="form-group">
+                  <label>Timeout (sec)</label>
+                  <input type="number" id="cfgTimeout" class="text-input" min="5">
+                </div>
+                <div class="form-group">
+                  <label>Max Retries</label>
+                  <input type="number" id="cfgRetries" class="text-input" min="1" max="10">
+                </div>
+              </div>
+              <div class="checkbox-row">
+                <label class="custom-switch">
+                  <input type="checkbox" id="cfgFetchWow">
+                  <span class="slider"></span>
+                  <span class="switch-label">Fetch Flipkart WOW Deals & Sizes (PDP Enrichment)</span>
+                </label>
+              </div>
+              <div class="checkbox-row">
+                <label class="custom-switch">
+                  <input type="checkbox" id="cfgUsePlaywright">
+                  <span class="slider"></span>
+                  <span class="switch-label">Enable Playwright (for dynamic SPAs like Myntra/TataCLiQ)</span>
+                </label>
+              </div>
+            </div>
+
+            <!-- Notifications Card -->
+            <div class="config-card">
+              <div class="card-title">
+                <span class="icon">🔔</span> Notifications
+              </div>
+              <div class="checkbox-row">
+                <label class="custom-switch">
+                  <input type="checkbox" id="cfgMacosNotify">
+                  <span class="slider"></span>
+                  <span class="switch-label">macOS Native Banner Notifications</span>
+                </label>
+              </div>
+              <div class="checkbox-row">
+                <label class="custom-switch">
+                  <input type="checkbox" id="cfgTelegramNotify">
+                  <span class="slider"></span>
+                  <span class="switch-label">Telegram Alerts</span>
+                </label>
+              </div>
+              <div class="form-group telegram-fields" id="telegramFields">
+                <label>Telegram Bot Token</label>
+                <input type="text" id="cfgTelegramToken" class="text-input"
+                  placeholder="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11">
+                <label style="margin-top: 8px;">Telegram Chat ID</label>
+                <input type="text" id="cfgTelegramChatId" class="text-input" placeholder="@channel or -100xxxxxxxxxx">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Raw JSON Mode View -->
+        <div id="configJsonView" class="config-view" style="display: none;">
+          <div class="json-editor-toolbar">
+            <span class="editor-status" id="jsonValidationStatus">✓ JSON is valid</span>
+            <div class="editor-buttons">
+              <button class="btn btn-sm btn-outline" id="btnFormatJson">✨ Format JSON</button>
+            </div>
+          </div>
+          <textarea id="rawJsonEditor" spellcheck="false" class="json-textarea"></textarea>
+        </div>
+      </section>
+
+
+      <!-- ── SECTION 3: SCHEDULER ─────────────────────────────────────────── -->
+      <section id="panel-scheduler" class="tab-panel">
+        <div class="scheduler-container">
+          <div class="scheduler-card hero-card">
+            <div class="hero-header">
+              <div>
+                <span class="pill-badge">Automated Scanner</span>
+                <h2 class="hero-title">Continuous Deal Monitor</h2>
+                <p class="hero-subtitle">Automatically trigger the scraper at custom recurring intervals in the
+                  background.</p>
+              </div>
+              <div class="scheduler-toggle-wrap">
+                <label class="big-switch">
+                  <input type="checkbox" id="schedEnableToggle">
+                  <span class="big-slider"></span>
+                </label>
+                <span class="switch-status-text" id="schedToggleLabel">Inactive</span>
+              </div>
+            </div>
+
+            <!-- Interval Setup -->
+            <div class="interval-setup">
+              <label class="section-label">Execution Frequency</label>
+              <div class="interval-input-group">
+                <span class="interval-prefix">Run scanner every</span>
+                <input type="number" id="schedIntervalInput" min="1" max="1440" value="15"
+                  class="interval-number-input">
+                <span class="interval-suffix">minutes</span>
+              </div>
+
+              <!-- Frequency Quick Presets -->
+              <div class="interval-presets">
+                <span class="preset-label">Quick Presets:</span>
+                <button class="preset-btn" data-minutes="5">5m</button>
+                <button class="preset-btn" data-minutes="10">10m</button>
+                <button class="preset-btn active" data-minutes="15">15m</button>
+                <button class="preset-btn" data-minutes="30">30m</button>
+                <button class="preset-btn" data-minutes="60">1 hour</button>
+              </div>
+            </div>
+
+            <!-- Live Status & Countdown Display -->
+            <div class="scheduler-telemetry">
+              <div class="telemetry-box">
+                <span class="telemetry-label">Status</span>
+                <span class="telemetry-val" id="schedStateVal">Stopped</span>
+              </div>
+              <div class="telemetry-box highlight">
+                <span class="telemetry-label">Next Run In</span>
+                <span class="telemetry-val timer-digits" id="schedCountdownVal">--:--</span>
+              </div>
+              <div class="telemetry-box">
+                <span class="telemetry-label">Last Execution</span>
+                <span class="telemetry-val" id="schedLastRunVal">Never</span>
+              </div>
+            </div>
+
+            <div class="scheduler-save-bar">
+              <button id="btnSaveSchedule" class="btn btn-primary btn-lg">
+                Update Schedule Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+
+      <!-- ── SECTION 4: LIVE TERMINAL & CONSOLE ────────────────────────────── -->
+      <section id="panel-console" class="tab-panel">
+        <div class="console-wrapper">
+          <div class="terminal-bar">
+            <div class="terminal-dots">
+              <span class="dot dot-red"></span>
+              <span class="dot dot-yellow"></span>
+              <span class="dot dot-green"></span>
+              <span class="terminal-title">deal_scanner :: pipeline stdout</span>
+            </div>
+            <div class="terminal-actions">
+              <label class="terminal-opt">
+                <input type="checkbox" id="chkAutoScroll" checked>
+                <span>Auto-scroll</span>
+              </label>
+              <button id="btnClearTerminal" class="terminal-btn">Clear Logs</button>
+              <button id="btnTriggerTerminalAbort" class="terminal-btn danger" style="display: none;"
+                title="Abort scanning and dump collected deals">🛑 Abort & Dump</button>
+              <button id="btnTriggerTerminalRun" class="terminal-btn primary">▶ Run Scanner</button>
+            </div>
+          </div>
+
+          <div id="terminalWindow" class="terminal-body">
+            <div class="terminal-line dim">Deal Scanner Console Ready. Click "Run Scanner" to start a live crawl
+              session.</div>
+          </div>
+        </div>
+      </section>
+
+    </main>
+
+    <!-- Toast Notification Container -->
+    <div id="toastContainer" class="toast-container"></div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+
+</html>
