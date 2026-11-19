@@ -39,36 +39,36 @@ if not _API_KEY:
 
 _CLIENT = genai.Client(api_key=_API_KEY)
 _CANDIDATE_MODELS = [
-    "gemini-3.5-flash",
-    "gemini-3.8-flash",
+    "gemini-2.5-flash",
+    "gemini-2.0-flash",
+    "gemini-3.5-flash-lite",
     "gemini-flash-latest",
-    "gemini-3.1-flash-lite",
-    "gemini-pro-latest",
+    "gemini-1.5-flash",
 ]
 
 
 def _call_llm(prompt: str) -> str:
     last_err = None
     for model_name in _CANDIDATE_MODELS:
-        for attempt in range(2):
-            try:
-                resp = _CLIENT.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                )
-                if resp.text and resp.text.strip():
-                    return resp.text.strip()
-            except Exception as e:
-                last_err = e
-                time.sleep(1)
+        try:
+            resp = _CLIENT.models.generate_content(
+                model=model_name,
+                contents=prompt,
+            )
+            if resp.text and resp.text.strip():
+                return resp.text.strip()
+        except Exception as e:
+            last_err = e
+            continue
     raise RuntimeError(f"All Gemini candidate models failed. Last error: {last_err}")
 
-CONFIG_PATH = Path(__file__).parent / "config.json"
+from core.config import load_config
+
 console = Console()
 
 
 def _load_config() -> dict:
-    return json.loads(CONFIG_PATH.read_text())
+    return load_config()
 
 
 # ── Stage 1: PARSE ─────────────────────────────────────────────────────────────
@@ -92,7 +92,7 @@ Rules:
 - "queries" must always be present with at least one term
 - Convert price ranges like "under 5k" to max_price=5000
 - If user says "at least 50% off" set min_discount_pct=50
-- Infer sizes: if user says "size 10" add "10" to target_sizes
+- Infer sizes: if user mentions sizes (e.g. "size 10,11", "size 9 or 10", "uk 10"), add each size as a string to target_sizes (e.g. ["10", "11"])
 - Return ONLY the JSON object, no markdown, no explanation
 
 User input: {user_input}
@@ -104,24 +104,41 @@ def parse_intent(user_input: str) -> dict:
     prompt = _PARSE_PROMPT.format(user_input=user_input)
 
     console.print("[dim]▸ Stage 1: Parsing intent...[/]")
-    raw = _call_llm(prompt)
-
-    # Strip markdown fences if model adds them
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
-
     try:
+        raw = _call_llm(prompt)
+        # Strip markdown fences if model adds them
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
         params = json.loads(raw)
-    except json.JSONDecodeError:
-        console.print(f"[red]Failed to parse LLM response:[/] {raw}")
-        sys.exit(1)
+    except Exception as e:
+        console.print(f"[yellow]LLM intent parsing failed: {e}. Using regex fallback.[/]")
+        import re
+        q_clean = re.sub(r"\b(?:size\s*(?:uk\s*)?\d+|under\s*\d+k?|at\s*least\s*\d+%\s*off|\d+%\s*off)\b", "", user_input, flags=re.I)
+        q_clean = re.sub(r"\s+", " ", q_clean).strip()
+        params = {"queries": [q_clean or user_input]}
+
+        m_size = re.search(r"\b(?:size|uk)\s*(\d+)\b", user_input, re.I)
+        if m_size:
+            params["target_sizes"] = [m_size.group(1)]
+
+        m_disc = re.search(r"(\d+)\s*%", user_input)
+        if m_disc:
+            params["min_discount_pct"] = int(m_disc.group(1))
+
+        m_price = re.search(r"(?:under|<|below)\s*(\d+)(k)?\b", user_input, re.I)
+        if m_price:
+            val = int(m_price.group(1))
+            if m_price.group(2):
+                val *= 1000
+            params["max_price"] = val
 
     # Fill defaults from config for anything not mentioned
     wl = cfg.get("watchlist", {})
-    params.setdefault("min_discount_pct", cfg.get("min_discount_pct", wl.get("min_discount_pct", 30)))
+    # If user did not explicitly mention a discount percentage, default to 0 (don't reject real matches)
+    params.setdefault("min_discount_pct", 0)
     params.setdefault("max_price", cfg.get("max_price", wl.get("max_price", 15000)))
     params.setdefault("min_price", cfg.get("min_price", wl.get("min_price", 0)))
 
@@ -142,6 +159,8 @@ def run_pipeline(params: dict) -> list:
         for k in ("brands", "target_sizes", "min_discount_pct", "min_price", "max_price")
         if k in params
     }
+    if "brands" not in query_overrides:
+        query_overrides["brands"] = []
     queries = [{"query": q, **query_overrides} for q in params["queries"]]
     scraper_names = params.get("scrapers")  # None = all
 
@@ -169,6 +188,41 @@ def run_pipeline(params: dict) -> list:
         if d.deal_id not in seen_ids:
             seen_ids.add(d.deal_id)
             unique.append(d)
+
+    # Strict target size filtering: if user requested target_sizes, deal must contain at least one requested size
+    if params.get("target_sizes"):
+        def _norm(sz):
+            s = str(sz).upper().replace("UK", "").replace("US", "").replace("EU", "").strip()
+            try:
+                f = float(s)
+                return str(int(f)) if f.is_integer() else f"{f:.1f}"
+            except ValueError:
+                return s
+
+        req_sizes = {_norm(s) for s in params["target_sizes"]}
+        filtered_by_size = []
+        for d in unique:
+            if not d.available_sizes:
+                filtered_by_size.append(d)
+                continue
+            deal_sizes = {_norm(s) for s in d.available_sizes}
+            if req_sizes.intersection(deal_sizes):
+                filtered_by_size.append(d)
+        unique = filtered_by_size
+
+    # Prioritize items matching specific model keywords (e.g. '9060', 'sl 72')
+    query_tokens = set()
+    stopwords = {"men", "women", "shoes", "shoe", "sneakers", "sneaker", "running", "training", "under", "for", "with", "the"}
+    for q in params.get("queries", []):
+        for token in q.lower().split():
+            if len(token) > 1 and token not in stopwords:
+                query_tokens.add(token)
+
+    model_tokens = {t for t in query_tokens if any(c.isdigit() for c in t)}
+    if model_tokens:
+        exact = [d for d in unique if any(t in d.title.lower() for t in model_tokens)]
+        if exact:
+            unique = exact
 
     return unique
 
@@ -203,11 +257,10 @@ Return ONLY the JSON array.
 """
 
 def judge_deals(deals: list, user_input: str) -> list[Judgment]:
-    """Stage 3: LLM scores each deal."""
+    """Stage 3: LLM scores deals in batches of 40."""
     if not deals:
         return []
 
-    from dataclasses import asdict
     deals_data = []
     for d in deals:
         deals_data.append({
@@ -223,27 +276,42 @@ def judge_deals(deals: list, user_input: str) -> list[Judgment]:
             "source": d.source,
         })
 
-    prompt = _JUDGE_PROMPT.format(
-        user_input=user_input,
-        deals_json=json.dumps(deals_data, indent=2),
-    )
+    console.print("[dim]▸ Stage 3: Judging deals in batches...[/]")
+    ratings = []
+    batch_size = 40
 
-    console.print("[dim]▸ Stage 3: Judging deals...[/]")
-    raw = _call_llm(prompt)
+    for i in range(0, len(deals_data), batch_size):
+        batch = deals_data[i:i + batch_size]
+        prompt = _JUDGE_PROMPT.format(
+            user_input=user_input,
+            deals_json=json.dumps(batch, indent=2),
+        )
 
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
+        try:
+            raw = _call_llm(prompt)
+            if raw.startswith("```"):
+                raw = raw.split("```")[1]
+                if raw.startswith("json"):
+                    raw = raw[4:]
+                raw = raw.strip()
+            batch_ratings = json.loads(raw)
+            ratings.extend(batch_ratings)
+        except Exception as e:
+            console.print(f"[yellow]LLM batch judging failed ({e}). Using rule fallback for batch.[/]")
+            for d in deals[i:i + batch_size]:
+                disc = max(d.wow_discount_pct or 0.0, d.discount_pct or 0.0)
+                if disc >= 50:
+                    v = "STEAL"
+                    r = f"High {disc:.0f}% savings"
+                elif disc >= 25:
+                    v = "WORTH_IT"
+                    r = f"Solid {disc:.0f}% savings"
+                else:
+                    v = "SKIP"
+                    r = "Modest discount"
+                ratings.append({"id": d.deal_id, "verdict": v, "reason": r})
 
-    try:
-        ratings = json.loads(raw)
-    except json.JSONDecodeError:
-        console.print(f"[yellow]Could not parse judgments, skipping:[/] {raw}")
-        return []
-
-    return [Judgment(r["id"], r["verdict"], r["reason"]) for r in ratings]
+    return [Judgment(r["id"], r.get("verdict", "WORTH_IT"), r.get("reason", "Solid match")) for r in ratings]
 
 
 # ── Output ─────────────────────────────────────────────────────────────────────
