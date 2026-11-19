@@ -3,6 +3,7 @@
 *.env
 flipkart_cookies.txt
 config.json
+config.yaml
 
 # Python
 __pycache__/
@@ -20,6 +21,9 @@ seen_deals.json
 ignored_deals.json
 *.log
 schedule.json
+*.db
+*.sqlite3
+deal_scout.db
 
 # macOS
 .DS_Store
