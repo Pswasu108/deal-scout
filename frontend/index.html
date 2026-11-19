@@ -102,6 +102,11 @@
         <span class="tab-text">Deals Explorer</span>
         <span class="badge" id="tabDealsBadge">0</span>
       </button>
+      <button class="nav-tab" data-tab="trackers" id="tab-trackers">
+        <span class="tab-icon">🎯</span>
+        <span class="tab-text">Price Trackers</span>
+        <span class="badge" id="tabTrackersBadge">0</span>
+      </button>
       <button class="nav-tab" data-tab="agent" id="tab-agent">
         <span class="tab-icon">🤖</span>
         <span class="tab-text">Agent Scout</span>
@@ -146,6 +151,9 @@
                 <span id="agentBtnIcon">🚀</span>
                 <span id="agentBtnText">Ask Agent</span>
               </button>
+              <button type="button" id="btnAgentAbort" class="btn agent-abort-btn" style="display: none;" title="Abort scouting">
+                <span>⛔ Abort</span>
+              </button>
             </div>
           </form>
 
@@ -163,6 +171,7 @@
           <div class="agent-status-header">
             <div class="agent-pulse-dot"></div>
             <span id="agentStatusTitle" class="agent-status-title">Agent is searching &amp; evaluating...</span>
+            <button type="button" id="btnAbortScoutStatus" class="btn btn-sm agent-abort-btn" style="margin-left: auto;" title="Abort scouting">⛔ Abort</button>
           </div>
           <div class="agent-steps">
             <div class="agent-step" id="agentStep1">
@@ -187,10 +196,11 @@
           <div class="agent-summary-bar">
             <div class="agent-params-pillbox" id="agentParamsPills"></div>
             <div class="agent-verdict-filters">
-              <button class="agent-filter-pill active" data-verdict="all" id="af-all">All (<span id="afCountAll">0</span>)</button>
+              <button class="agent-filter-pill qualified active" data-verdict="qualified" id="af-qualified">⚡ Best Deals (<span id="afCountQualified">0</span>)</button>
               <button class="agent-filter-pill steal" data-verdict="STEAL" id="af-steal">🔥 Steals (<span id="afCountSteal">0</span>)</button>
               <button class="agent-filter-pill worth_it" data-verdict="WORTH_IT" id="af-worth">✓ Worth It (<span id="afCountWorth">0</span>)</button>
-              <button class="agent-filter-pill skip" data-verdict="SKIP" id="af-skip">✗ Skip (<span id="afCountSkip">0</span>)</button>
+              <button class="agent-filter-pill skip" data-verdict="SKIP" id="af-skip">✗ Skipped (<span id="afCountSkip">0</span>)</button>
+              <button class="agent-filter-pill" data-verdict="all" id="af-all">All (<span id="afCountAll">0</span>)</button>
             </div>
           </div>
 
@@ -244,6 +254,7 @@
 
             <select id="verdictFilter" class="select-input" title="Filter by AI Agent Verdict">
               <option value="all">All Verdicts</option>
+              <option value="QUALIFIED">⚡ Steals &amp; Worth It</option>
               <option value="STEAL">🔥 Steals Only</option>
               <option value="WORTH_IT">✓ Worth It</option>
               <option value="SKIP">✗ Skip</option>
@@ -291,6 +302,115 @@
           <h3>No matching deals found</h3>
           <p>Run the scanner to discover deals matching your watchlist or clear search filters.</p>
           <button class="btn btn-primary" onclick="triggerRun(true)">Run Deal Scanner</button>
+        </div>
+      </section>
+
+      <!-- ── SECTION: PRICE TRACKERS ─────────────────────────────────────── -->
+      <section id="panel-trackers" class="tab-panel">
+        <div class="trackers-hero">
+          <div class="trackers-hero-header">
+            <div class="trackers-icon-badge">🎯</div>
+            <div class="trackers-title-block">
+              <h2 class="hero-title">Price Target Tracker</h2>
+              <p class="hero-subtitle">Monitor price drops on specific items. Add products by search keyword or direct URL and get notified when target prices hit.</p>
+            </div>
+            <div class="trackers-hero-actions">
+              <button id="btnCheckTrackersNow" class="btn btn-outline" title="Trigger immediate price check on all active trackers">
+                <span class="btn-spinner" id="trackerCheckSpinner" style="display:none;"></span>
+                <span id="trackerCheckBtnIcon">🔄</span>
+                <span id="trackerCheckBtnText">Check All Trackers</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Tracker Search / Create Card -->
+          <div class="tracker-search-card">
+            <div class="tracker-form-grid">
+              <div class="form-group span-2">
+                <label>Product Search Keyword or URL</label>
+                <div class="tracker-input-wrap">
+                  <input type="text" id="trackerInputQuery" class="text-input" placeholder="e.g. Titan Edge Ceramic, Adidas SL 72, or paste product URL">
+                </div>
+              </div>
+              <div class="form-group">
+                <label>Target Price (₹)</label>
+                <input type="number" id="trackerInputTargetPrice" class="text-input" placeholder="e.g. 5000" min="1">
+              </div>
+              <div class="form-group">
+                <label>Size (Optional)</label>
+                <input type="text" id="trackerInputSize" class="text-input" placeholder="e.g. 9, 10, UK 8">
+              </div>
+              <div class="form-group">
+                <label>Check Frequency</label>
+                <select id="trackerInputInterval" class="select-input">
+                  <option value="15">Every 15 mins</option>
+                  <option value="30" selected>Every 30 mins</option>
+                  <option value="60">Every 1 hour</option>
+                  <option value="120">Every 2 hours</option>
+                  <option value="360">Every 6 hours</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Results Limit</label>
+                <select id="trackerInputLimit" class="select-input">
+                  <option value="10">10 options</option>
+                  <option value="20" selected>20 options</option>
+                  <option value="30">30 options</option>
+                  <option value="40">40 options</option>
+                </select>
+              </div>
+              <div class="form-group action-group">
+                <label>&nbsp;</label>
+                <div class="tracker-search-buttons">
+                  <button id="btnPreviewCandidates" class="btn btn-primary" type="button">
+                    <span class="btn-spinner" id="previewSpinner" style="display:none;"></span>
+                    <span id="previewBtnIcon">🔍</span>
+                    <span id="previewBtnText">Search Preview (20)</span>
+                  </button>
+                  <button id="btnDirectTrack" class="btn btn-outline" type="button" title="Track directly without preview (for exact URLs)">
+                    + Quick Add
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Candidate Preview Selection Box -->
+        <div id="trackerCandidatesBox" class="tracker-candidates-box" style="display: none;">
+          <div class="candidates-header">
+            <div>
+              <h3 class="candidates-title">Select Products to Track (<span id="candidatesCount">0</span> found)</h3>
+              <p class="candidates-subtitle">Choose the items you want to monitor, adjust target prices if needed, and confirm.</p>
+            </div>
+            <div class="candidates-actions">
+              <button id="btnSelectAllCandidates" class="btn btn-sm btn-outline">Select All</button>
+              <button id="btnTrackSelected" class="btn btn-sm btn-primary">Track Selected Items</button>
+              <button id="btnCloseCandidates" class="btn btn-sm btn-outline">✕ Dismiss</button>
+            </div>
+          </div>
+          <div id="candidatesGrid" class="candidates-grid"></div>
+        </div>
+
+        <!-- Active Trackers Management -->
+        <div class="trackers-list-header">
+          <div class="tracker-status-filters">
+            <button class="tracker-filter-btn active" data-status="all" id="tf-all">All Trackers (<span id="tfCountAll">0</span>)</button>
+            <button class="tracker-filter-btn" data-status="ACTIVE" id="tf-active">Active (<span id="tfCountActive">0</span>)</button>
+            <button class="tracker-filter-btn" data-status="PAUSED" id="tf-paused">Paused (<span id="tfCountPaused">0</span>)</button>
+            <button class="tracker-filter-btn" data-status="HIT" id="tf-hit">Target Hit ✨ (<span id="tfCountHit">0</span>)</button>
+          </div>
+          <div class="tracker-tools">
+            <button id="btnRefreshTrackers" class="btn btn-sm btn-outline">🔄 Refresh List</button>
+          </div>
+        </div>
+
+        <div id="trackersContainer" class="trackers-grid"></div>
+
+        <div id="trackersEmptyState" class="empty-state" style="display: none;">
+          <div class="empty-icon">🎯</div>
+          <h3>No price trackers configured</h3>
+          <p>Search for a product above or paste a URL to monitor price drops automatically.</p>
         </div>
       </section>
 
@@ -351,6 +471,10 @@
                   <input type="number" id="cfgMaxProducts" class="text-input" min="40" step="40"
                     placeholder="40, 80, 120">
                 </div>
+                <div class="form-group">
+                  <label>Delivery Pincode</label>
+                  <input type="text" id="cfgPincode" class="text-input" placeholder="110009" maxlength="6">
+                </div>
               </div>
             </div>
 
@@ -360,7 +484,7 @@
                 <div>
                   <div class="card-title"><span class="icon">🔎</span> Search Queries</div>
                   <span class="field-hint" style="margin-left: 28px;">Configure search queries with optional overrides:
-                    Retailer, Min Disc %, Min Price, Max Price, Raw Limit (e.g. 80, 120)</span>
+                    Retailer, Gender, Min Disc %, Min Price, Max Price, Raw Limit (e.g. 80, 120)</span>
                 </div>
                 <button type="button" class="btn btn-sm btn-outline" id="btnAddQuery">+ Add Query</button>
               </div>
@@ -544,6 +668,53 @@
       </section>
 
     </main>
+
+    <!-- Price History Modal -->
+    <div id="priceHistoryModal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card">
+        <div class="modal-header">
+          <div class="modal-title-wrap">
+            <span class="modal-icon">📈</span>
+            <div>
+              <h3 id="historyModalTitle" class="modal-title">Price History</h3>
+              <p id="historyModalSubtitle" class="modal-subtitle">Tracking price movements over time</p>
+            </div>
+          </div>
+          <button id="btnCloseHistoryModal" class="btn-close-modal" type="button">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="chart-summary-pills">
+            <div class="summary-pill">
+              <span class="pill-label">Lowest Recorded</span>
+              <span class="pill-val" id="histMinPrice">₹0</span>
+            </div>
+            <div class="summary-pill">
+              <span class="pill-label">Current Price</span>
+              <span class="pill-val" id="histCurrentPrice">₹0</span>
+            </div>
+            <div class="summary-pill">
+              <span class="pill-label">Original MRP</span>
+              <span class="pill-val" id="histMrp">₹0</span>
+            </div>
+          </div>
+          <div class="chart-container">
+            <canvas id="priceHistoryChart" width="600" height="220"></canvas>
+          </div>
+          <div class="history-table-wrap">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Sale Price</th>
+                  <th>Discount</th>
+                </tr>
+              </thead>
+              <tbody id="historyTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- Toast Notification Container -->
     <div id="toastContainer" class="toast-container"></div>

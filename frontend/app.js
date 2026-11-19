@@ -11,9 +11,11 @@
   let pollInterval = null;
   let countdownTimer = null;
   let nextRunSeconds = null;
+  let feedbackMap = {};
 
   // DOM Elements
   const tabDeals = document.getElementById('tab-deals');
+  const tabTrackers = document.getElementById('tab-trackers');
   const tabConfig = document.getElementById('tab-config');
   const tabScheduler = document.getElementById('tab-scheduler');
   const tabConsole = document.getElementById('tab-console');
@@ -22,10 +24,12 @@
   const panelAgent = document.getElementById('panel-agent');
 
   const panelDeals = document.getElementById('panel-deals');
+  const panelTrackers = document.getElementById('panel-trackers');
   const panelConfig = document.getElementById('panel-config');
   const panelScheduler = document.getElementById('panel-scheduler');
   const panelConsole = document.getElementById('panel-console');
   const verdictFilter = document.getElementById('verdictFilter');
+  const tabTrackersBadge = document.getElementById('tabTrackersBadge');
 
   const dealsContainer = document.getElementById('dealsContainer');
   const dealsEmptyState = document.getElementById('dealsEmptyState');
@@ -94,6 +98,7 @@
   // ── Tab Management ─────────────────────────────────────────────────────────
   const tabs = [
     { btn: tabDeals, panel: panelDeals },
+    { btn: tabTrackers, panel: panelTrackers },
     { btn: tabAgent, panel: panelAgent },
     { btn: tabConfig, panel: panelConfig },
     { btn: tabScheduler, panel: panelScheduler },
@@ -101,16 +106,20 @@
   ];
 
   tabs.forEach(t => {
-    t.btn.addEventListener('click', () => switchTab(t.btn.dataset.tab));
+    if (t.btn) {
+      t.btn.addEventListener('click', () => switchTab(t.btn.dataset.tab));
+    }
   });
 
   function switchTab(tabName) {
     tabs.forEach(t => {
+      if (!t.btn || !t.panel) return;
       const isMatch = t.btn.dataset.tab === tabName;
       t.btn.classList.toggle('active', isMatch);
       t.panel.classList.toggle('active', isMatch);
     });
     if (tabName === 'deals') loadDeals();
+    if (tabName === 'trackers') loadTrackers();
     if (tabName === 'config') loadConfig();
   }
 
@@ -141,8 +150,19 @@
   }
 
   // ── Deals API & Rendering ─────────────────────────────────────────────────
+  async function loadFeedback() {
+    try {
+      const res = await fetch('/api/deals/feedback');
+      const data = await res.json();
+      feedbackMap = data.feedback || {};
+    } catch (err) {
+      console.warn('Feedback load error', err);
+    }
+  }
+
   async function loadDeals() {
     try {
+      await loadFeedback();
       if (isIgnoredView) {
         const res = await fetch('/api/deals/ignored');
         const data = await res.json();
@@ -233,9 +253,13 @@
     const wowPrice = d.wow_price ? Math.round(d.wow_price) : null;
     const salePrice = Math.round(d.sale_price || 0);
     const mrp = Math.round(d.original_price || 0);
+    const dealId = d.deal_id || d.product_url;
+    const userFeedback = feedbackMap[dealId] || '';
 
     // AI Verdict
-    const verdict = (d.agent_verdict || '').toUpperCase();
+    const verdict = (d.verdict || d.agent_verdict || '').toUpperCase();
+    const reason = d.reason || d.agent_reason || '';
+    const scoreVal = d.score != null ? Number(d.score).toFixed(1) : null;
     const verdictClass = verdict === 'STEAL' ? 'verdict-steal' : (verdict === 'WORTH_IT' ? 'verdict-worth_it' : (verdict === 'SKIP' ? 'verdict-skip' : ''));
     const verdictIcon = verdict === 'STEAL' ? '🔥' : (verdict === 'WORTH_IT' ? '✓' : '✗');
     const verdictLabel = verdict === 'STEAL' ? 'STEAL' : (verdict === 'WORTH_IT' ? 'WORTH IT' : 'SKIP');
@@ -243,8 +267,29 @@
     // Sizes markup
     let sizesHtml = '';
     if (d.available_sizes && d.available_sizes.length > 0) {
-      sizesHtml = d.available_sizes.slice(0, 10).map(sz => {
-        const isTarget = targetSizes.includes(String(sz).toUpperCase());
+      const normTargets = (targetSizes || []).map(s => String(s).toUpperCase().replace(/^(UK|US|EU|IND|[\/\s\-])+/i, '').replace(/[\/\s\-]+/g, '').trim());
+      const isTargetSize = (sz) => {
+        const norm = String(sz).toUpperCase().replace(/^(UK|US|EU|IND|[\/\s\-])+/i, '').replace(/[\/\s\-]+/g, '').trim();
+        if (normTargets.includes(norm)) return true;
+        const num = parseFloat(norm);
+        if (!isNaN(num)) {
+          return normTargets.some(t => parseFloat(t) === num);
+        }
+        return false;
+      };
+
+      const sortedSizes = [...d.available_sizes].sort((a, b) => {
+        const aTarget = isTargetSize(a);
+        const bTarget = isTargetSize(b);
+        if (aTarget && !bTarget) return -1;
+        if (!aTarget && bTarget) return 1;
+        const numA = parseFloat(a), numB = parseFloat(b);
+        if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+        return String(a).localeCompare(String(b));
+      });
+
+      sizesHtml = sortedSizes.map(sz => {
+        const isTarget = isTargetSize(sz);
         return `<span class="size-pill ${isTarget ? 'matched' : ''}">${escapeHtml(sz)}</span>`;
       }).join('');
     } else {
@@ -267,11 +312,15 @@
         ${verdict ? `
           <div class="deal-verdict-banner ${verdictClass}">
             <span class="deal-verdict-badge">${verdictIcon} AI Verdict: ${verdictLabel}</span>
+            ${scoreVal ? `<span class="deal-verdict-score" style="font-size:0.75rem; font-weight:700; opacity:0.9;">⭐ ${scoreVal}</span>` : ''}
           </div>
         ` : ''}
 
         <div class="card-top-banner">
-          ${getStoreBadgeHtml(d.source)}
+          <div style="display:flex; align-items:center; gap:6px;">
+            ${getStoreBadgeHtml(d.source)}
+            ${verdict ? `<span class="deal-verdict-chip ${verdictClass}">${verdictIcon} ${verdictLabel}</span>` : ''}
+          </div>
           ${displayDisc > 0 ? `<span class="${badgeClass}" title="${hasWowDisc ? 'Effective WOW Discount' : 'Standard Discount'}">${badgeText}</span>` : ''}
         </div>
 
@@ -292,9 +341,9 @@
         </div>
 
         <div class="deal-content">
-          ${d.agent_reason ? `
+          ${reason ? `
             <div class="agent-reason-card-box ${verdictClass}">
-              <strong>🤖 AI Evaluator:</strong> ${escapeHtml(d.agent_reason)}
+              <strong>🤖 AI Evaluator:</strong> ${escapeHtml(reason)}
             </div>
           ` : ''}
 
@@ -318,7 +367,14 @@
           <div class="card-footer">
             <span class="scraped-time">${timeStr ? `🕒 ${timeStr}` : ''}</span>
             <div class="deal-actions-wrap">
-              <button class="deal-ignore-btn" data-deal-id="${escapeHtml(d.deal_id || d.product_url)}" data-brand="${escapeHtml(d.brand || '')}" data-title="${escapeHtml(d.title || '')}" data-url="${escapeHtml(d.product_url || '')}" data-price="${d.sale_price || 0}" data-source="${escapeHtml(d.source || '')}" title="Skip/ignore this product from subsequent scans">
+              <div class="deal-feedback-actions">
+                <button class="deal-feedback-btn ${userFeedback === 'LIKED' ? 'liked' : ''}" data-deal-id="${escapeHtml(dealId)}" data-action="LIKED" title="I like this deal">👍</button>
+                <button class="deal-feedback-btn ${userFeedback === 'DISLIKED' ? 'disliked' : ''}" data-deal-id="${escapeHtml(dealId)}" data-action="DISLIKED" title="Not relevant / bad deal">👎</button>
+              </div>
+              <button class="deal-history-btn" data-deal-id="${escapeHtml(dealId)}" data-title="${escapeHtml(d.title || '')}" data-mrp="${mrp}" data-price="${salePrice}" title="View price history over time">
+                📈
+              </button>
+              <button class="deal-ignore-btn" data-deal-id="${escapeHtml(dealId)}" data-brand="${escapeHtml(d.brand || '')}" data-title="${escapeHtml(d.title || '')}" data-url="${escapeHtml(d.product_url || '')}" data-price="${d.sale_price || 0}" data-source="${escapeHtml(d.source || '')}" title="Skip/ignore this product from subsequent scans">
                 🚫 Skip
               </button>
               <a href="${escapeHtml(d.product_url)}" target="_blank" rel="noopener noreferrer" class="deal-link-btn">
@@ -350,8 +406,12 @@
         }
       }
       if (verdictFilter && verdictFilter.value !== 'all') {
-        const v = (d.agent_verdict || '').toUpperCase();
-        if (v !== verdictFilter.value) return false;
+        const v = (d.verdict || d.agent_verdict || '').toUpperCase();
+        if (verdictFilter.value === 'QUALIFIED') {
+          if (v !== 'STEAL' && v !== 'WORTH_IT') return false;
+        } else if (v !== verdictFilter.value) {
+          return false;
+        }
       }
       if (searchVal) {
         const text = `${d.title || ''} ${d.brand || ''} ${(d.available_sizes || []).join(' ')}`.toLowerCase();
@@ -533,8 +593,50 @@
     }
   }
 
-  // Click delegation for ignore & unignore
+  async function handleFeedbackClick(dealId, action, btnEl) {
+    try {
+      const res = await fetch('/api/deals/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deal_id: dealId, action }),
+      });
+      if (res.ok) {
+        feedbackMap[dealId] = action;
+        const parent = btnEl.closest('.deal-feedback-actions');
+        if (parent) {
+          parent.querySelectorAll('.deal-feedback-btn').forEach(b => {
+            b.classList.remove('liked', 'disliked');
+          });
+          if (action === 'LIKED') btnEl.classList.add('liked');
+          if (action === 'DISLIKED') btnEl.classList.add('disliked');
+        }
+        showToast(action === 'LIKED' ? 'Marked deal as liked 👍' : 'Marked deal as disliked 👎', 'info');
+      }
+    } catch (err) {
+      showToast('Error saving feedback: ' + err.message, 'error');
+    }
+  }
+
+  // Click delegation for ignore, unignore, feedback & price history
   dealsContainer.addEventListener('click', e => {
+    const feedbackBtn = e.target.closest('.deal-feedback-btn');
+    if (feedbackBtn) {
+      const dealId = feedbackBtn.dataset.dealId;
+      const action = feedbackBtn.dataset.action;
+      handleFeedbackClick(dealId, action, feedbackBtn);
+      return;
+    }
+
+    const histBtn = e.target.closest('.deal-history-btn');
+    if (histBtn) {
+      const dealId = histBtn.dataset.dealId;
+      const title = histBtn.dataset.title;
+      const mrp = parseFloat(histBtn.dataset.mrp) || 0;
+      const price = parseFloat(histBtn.dataset.price) || 0;
+      showPriceHistory(dealId, title, mrp, price);
+      return;
+    }
+
     const ignoreBtn = e.target.closest('.deal-ignore-btn');
     if (ignoreBtn) {
       const dealId = ignoreBtn.dataset.dealId;
@@ -635,9 +737,15 @@
     if (!confirm('Are you sure you want to clear stored deals history? Ignored listings will NOT be cleared.')) return;
     try {
       const res = await fetch('/api/deals', { method: 'DELETE' });
+      const data = await res.json();
       if (res.ok) {
-        showToast('Seen deals history cleared', 'success');
-        loadDeals();
+        showToast(data.message || 'Seen deals history cleared', 'success');
+        allDeals = [];
+        renderDeals();
+        updateDealStats();
+        await loadDeals();
+      } else {
+        showToast(data.detail || data.error || 'Failed to clear deals', 'error');
       }
     } catch (err) {
       showToast('Failed to clear deals: ' + err.message, 'error');
@@ -649,11 +757,14 @@
       if (!confirm('Are you sure you want to clear the entire ignore list? These items will appear in scans again.')) return;
       try {
         const res = await fetch('/api/deals/ignored', { method: 'DELETE' });
+        const data = await res.json();
         if (res.ok) {
-          showToast('Ignored listings cleared', 'success');
+          showToast(data.message || 'Ignored listings cleared', 'success');
+          ignoredDeals = [];
+          renderIgnoredDeals();
           await loadDeals();
         } else {
-          showToast('Failed to clear ignored list', 'error');
+          showToast(data.detail || data.error || 'Failed to clear ignored list', 'error');
         }
       } catch (err) {
         showToast('Error: ' + err.message, 'error');
@@ -687,6 +798,9 @@
     document.getElementById('cfgMinDiscount').value = cfg.min_discount_pct ?? 30;
     document.getElementById('cfgMinPrice').value = cfg.min_price ?? 1000;
     document.getElementById('cfgMaxPrice').value = cfg.max_price ?? 15000;
+    if (document.getElementById('cfgPincode')) {
+      document.getElementById('cfgPincode').value = cfg.pincode ?? '110009';
+    }
 
     // Scraper
     const sc = cfg.scraper || {};
@@ -720,6 +834,7 @@
       const minP = typeof q === 'object' && q.min_price !== undefined ? q.min_price : '';
       const maxP = typeof q === 'object' && q.max_price !== undefined ? q.max_price : '';
       const maxProds = typeof q === 'object' && q.max_products !== undefined ? q.max_products : '';
+      const currentGender = typeof q === 'object' && q.gender ? String(q.gender).toLowerCase() : 'na';
 
       let currentScraper = 'all';
       if (typeof q === 'object') {
@@ -736,6 +851,13 @@
           <option value="flipkart" ${currentScraper === 'flipkart' ? 'selected' : ''}>Flipkart Only</option>
           <option value="myntra" ${currentScraper === 'myntra' ? 'selected' : ''}>Myntra Only</option>
           <option value="tatacliq" ${currentScraper === 'tatacliq' ? 'selected' : ''}>TataCLiQ Only</option>
+        </select>
+        <select class="select-input query-gender-select" title="Target gender for this query">
+          <option value="na" ${currentGender === 'na' ? 'selected' : ''}>Gender: N/A</option>
+          <option value="men" ${currentGender === 'men' ? 'selected' : ''}>Men</option>
+          <option value="women" ${currentGender === 'women' ? 'selected' : ''}>Women</option>
+          <option value="kids" ${currentGender === 'kids' ? 'selected' : ''}>Kids</option>
+          <option value="unisex" ${currentGender === 'unisex' ? 'selected' : ''}>Unisex</option>
         </select>
         <input type="number" class="text-input query-num-input query-disc" placeholder="Min %" value="${minDisc}" title="Min Discount %">
         <input type="number" class="text-input query-num-input query-minp" placeholder="Min ₹" value="${minP}" title="Min Price (₹)">
@@ -763,6 +885,13 @@
         <option value="myntra">Myntra Only</option>
         <option value="tatacliq">TataCLiQ Only</option>
       </select>
+      <select class="select-input query-gender-select" title="Target gender for this query">
+        <option value="na" selected>Gender: N/A</option>
+        <option value="men">Men</option>
+        <option value="women">Women</option>
+        <option value="kids">Kids</option>
+        <option value="unisex">Unisex</option>
+      </select>
       <input type="number" class="text-input query-num-input query-disc" placeholder="Min %" value="" title="Min Discount %">
       <input type="number" class="text-input query-num-input query-minp" placeholder="Min ₹" value="" title="Min Price (₹)">
       <input type="number" class="text-input query-num-input query-maxp" placeholder="Max ₹" value="" title="Max Price (₹)">
@@ -787,6 +916,10 @@
     cfg.min_discount_pct = Number(document.getElementById('cfgMinDiscount').value) || 0;
     cfg.min_price = Number(document.getElementById('cfgMinPrice').value) || 0;
     cfg.max_price = Number(document.getElementById('cfgMaxPrice').value) || 999999;
+    const pincodeInput = document.getElementById('cfgPincode');
+    if (pincodeInput) {
+      cfg.pincode = (pincodeInput.value || '110009').trim();
+    }
     const maxProd = Number(document.getElementById('cfgMaxProducts').value) || 40;
     cfg.max_products = maxProd;
 
@@ -816,14 +949,16 @@
       if (!text) return;
 
       const retailerVal = row.querySelector('.query-retailer-select').value;
+      const genderVal = row.querySelector('.query-gender-select')?.value || 'na';
       const disc = row.querySelector('.query-disc').value;
       const minp = row.querySelector('.query-minp').value;
       const maxp = row.querySelector('.query-maxp').value;
       const maxprods = row.querySelector('.query-prods').value;
 
-      if (disc !== '' || minp !== '' || maxp !== '' || maxprods !== '' || retailerVal !== 'all') {
+      if (disc !== '' || minp !== '' || maxp !== '' || maxprods !== '' || retailerVal !== 'all' || genderVal !== 'na') {
         const item = { query: text };
         if (retailerVal !== 'all') item.scrapers = [retailerVal];
+        if (genderVal !== 'na') item.gender = genderVal;
         if (disc !== '') item.min_discount_pct = Number(disc);
         if (minp !== '') item.min_price = Number(minp);
         if (maxp !== '') item.max_price = Number(maxp);
@@ -1152,9 +1287,27 @@
       if (data.is_running !== isRunning) {
         setRunningState(data.is_running);
         if (!data.is_running) {
-          // If just finished, reload deals!
+          // If just finished, reload deals & trackers!
           loadDeals();
+          loadTrackers();
         }
+      }
+
+      // Database stats update
+      if (data.database) {
+        if (data.database.total_deals != null && statDealsCount) {
+          statDealsCount.textContent = data.database.total_deals;
+          if (tabDealsBadge) tabDealsBadge.textContent = data.database.total_deals;
+        }
+        if (data.database.ignored_count != null && statIgnoredCount) {
+          statIgnoredCount.textContent = data.database.ignored_count;
+          if (ignoredBadge) ignoredBadge.textContent = data.database.ignored_count;
+        }
+      }
+
+      // Trackers telemetry update
+      if (data.trackers && tabTrackersBadge) {
+        tabTrackersBadge.textContent = data.trackers.active ?? 0;
       }
 
       // Terminal logs rendering
@@ -1230,11 +1383,14 @@
 
   // ── Agent Scout Functionality ─────────────────────────────────────────────
   let agentDeals = [];
-  let agentVerdictFilter = 'all';
+  let currentAgentParams = null;
+  let agentVerdictFilter = 'qualified';
 
   const agentSearchForm = document.getElementById('agentSearchForm');
   const agentInput = document.getElementById('agentInput');
   const btnAgentSubmit = document.getElementById('btnAgentSubmit');
+  const btnAgentAbort = document.getElementById('btnAgentAbort');
+  const btnAbortScoutStatus = document.getElementById('btnAbortScoutStatus');
   const agentSpinner = document.getElementById('agentSpinner');
   const agentBtnIcon = document.getElementById('agentBtnIcon');
   const agentBtnText = document.getElementById('agentBtnText');
@@ -1248,10 +1404,12 @@
   const agentDealsContainer = document.getElementById('agentDealsContainer');
   const agentEmptyState = document.getElementById('agentEmptyState');
 
+  const afQualified = document.getElementById('af-qualified');
   const afAll = document.getElementById('af-all');
   const afSteal = document.getElementById('af-steal');
   const afWorth = document.getElementById('af-worth');
   const afSkip = document.getElementById('af-skip');
+  const afCountQualified = document.getElementById('afCountQualified');
   const afCountAll = document.getElementById('afCountAll');
   const afCountSteal = document.getElementById('afCountSteal');
   const afCountWorth = document.getElementById('afCountWorth');
@@ -1310,21 +1468,31 @@
     if (agentEmptyState) agentEmptyState.style.display = 'none';
     if (agentResultsSection) agentResultsSection.style.display = 'block';
 
-    const steals = agentDeals.filter(d => (d.agent_verdict || '').toUpperCase() === 'STEAL').length;
-    const worths = agentDeals.filter(d => (d.agent_verdict || '').toUpperCase() === 'WORTH_IT').length;
-    const skips = agentDeals.filter(d => (d.agent_verdict || '').toUpperCase() === 'SKIP').length;
+    const steals = agentDeals.filter(d => (d.verdict || d.agent_verdict || '').toUpperCase() === 'STEAL').length;
+    const worths = agentDeals.filter(d => (d.verdict || d.agent_verdict || '').toUpperCase() === 'WORTH_IT').length;
+    const skips = agentDeals.filter(d => (d.verdict || d.agent_verdict || '').toUpperCase() === 'SKIP').length;
+    const qualified = steals + worths;
 
+    if (afCountQualified) afCountQualified.textContent = qualified;
     if (afCountAll) afCountAll.textContent = agentDeals.length;
     if (afCountSteal) afCountSteal.textContent = steals;
     if (afCountWorth) afCountWorth.textContent = worths;
     if (afCountSkip) afCountSkip.textContent = skips;
 
     let filtered = agentDeals.filter(d => {
+      const v = (d.verdict || d.agent_verdict || '').toUpperCase();
+      if (agentVerdictFilter === 'qualified') {
+        return v === 'STEAL' || v === 'WORTH_IT';
+      }
       if (agentVerdictFilter === 'all') return true;
-      return (d.agent_verdict || '').toUpperCase() === agentVerdictFilter;
+      return v === agentVerdictFilter;
     });
 
-    const targetSizes = (currentConfig?.watchlist?.target_sizes || []).map(s => String(s).toUpperCase());
+    const activeTargets = (currentAgentParams?.target_sizes && currentAgentParams.target_sizes.length > 0)
+      ? currentAgentParams.target_sizes
+      : (currentConfig?.watchlist?.target_sizes || []);
+    const targetSizes = activeTargets.map(s => String(s).toUpperCase());
+
     if (agentDealsContainer) {
       if (filtered.length === 0) {
         agentDealsContainer.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 32px;">No deals match this verdict filter.</div>';
@@ -1334,6 +1502,35 @@
     }
   }
 
+  let currentAgentAbortController = null;
+
+  async function abortAgentSearch() {
+    if (currentAgentAbortController) {
+      currentAgentAbortController.abort();
+      currentAgentAbortController = null;
+    }
+    try {
+      await fetch('/api/agent/abort', { method: 'POST' });
+    } catch (_) {}
+    showToast('Scouting aborted', 'warning');
+    if (agentStatusCard) agentStatusCard.style.display = 'none';
+    if (btnAgentSubmit) {
+      btnAgentSubmit.style.display = 'inline-flex';
+      btnAgentSubmit.disabled = false;
+    }
+    if (btnAgentAbort) btnAgentAbort.style.display = 'none';
+    if (agentSpinner) agentSpinner.style.display = 'none';
+    if (agentBtnIcon) agentBtnIcon.style.display = 'inline-block';
+    if (agentBtnText) agentBtnText.textContent = 'Ask Agent';
+  }
+
+  if (btnAgentAbort) {
+    btnAgentAbort.addEventListener('click', abortAgentSearch);
+  }
+  if (btnAbortScoutStatus) {
+    btnAbortScoutStatus.addEventListener('click', abortAgentSearch);
+  }
+
   async function runAgentSearch(query) {
     if (!query || !query.trim()) return;
     query = query.trim();
@@ -1341,31 +1538,33 @@
     if (agentStatusCard) agentStatusCard.style.display = 'block';
     if (agentResultsSection) agentResultsSection.style.display = 'none';
     if (agentEmptyState) agentEmptyState.style.display = 'none';
-    if (btnAgentSubmit) btnAgentSubmit.disabled = true;
-    if (agentSpinner) agentSpinner.style.display = 'inline-block';
-    if (agentBtnIcon) agentBtnIcon.style.display = 'none';
-    if (agentBtnText) agentBtnText.textContent = 'Scouting...';
+    if (btnAgentSubmit) btnAgentSubmit.style.display = 'none';
+    if (btnAgentAbort) btnAgentAbort.style.display = 'inline-flex';
 
     setAgentStep(1);
     const step2Timer = setTimeout(() => setAgentStep(2), 2500);
     const step3Timer = setTimeout(() => setAgentStep(3), 8500);
+
+    currentAgentAbortController = new AbortController();
 
     try {
       const resp = await fetch('/api/agent/search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query }),
+        signal: currentAgentAbortController.signal,
       });
       clearTimeout(step2Timer);
       clearTimeout(step3Timer);
 
       const data = await resp.json();
       if (!resp.ok) {
-        throw new Error(data.error || 'Agent search failed');
+        throw new Error(data.error || data.detail || 'Agent search failed');
       }
 
       setAgentStep(3, true);
       agentDeals = data.deals || [];
+      currentAgentParams = data.params || {};
       renderAgentParams(data.params || {});
       renderAgentDeals();
       loadDeals(); // Refresh main deals list in background
@@ -1373,6 +1572,10 @@
     } catch (err) {
       clearTimeout(step2Timer);
       clearTimeout(step3Timer);
+      if (err.name === 'AbortError') {
+        showToast('Scouting cancelled', 'warning');
+        return;
+      }
       showToast('Agent Error: ' + err.message, 'error');
       if (agentEmptyState) {
         agentEmptyState.style.display = 'block';
@@ -1380,8 +1583,13 @@
         agentEmptyState.querySelector('p').textContent = err.message;
       }
     } finally {
+      currentAgentAbortController = null;
       if (agentStatusCard) agentStatusCard.style.display = 'none';
-      if (btnAgentSubmit) btnAgentSubmit.disabled = false;
+      if (btnAgentSubmit) {
+        btnAgentSubmit.style.display = 'inline-flex';
+        btnAgentSubmit.disabled = false;
+      }
+      if (btnAgentAbort) btnAgentAbort.style.display = 'none';
       if (agentSpinner) agentSpinner.style.display = 'none';
       if (agentBtnIcon) agentBtnIcon.style.display = 'inline-block';
       if (agentBtnText) agentBtnText.textContent = 'Ask Agent';
@@ -1402,10 +1610,10 @@
     });
   });
 
-  [afAll, afSteal, afWorth, afSkip].forEach(btn => {
+  [afQualified, afAll, afSteal, afWorth, afSkip].forEach(btn => {
     if (!btn) return;
     btn.addEventListener('click', () => {
-      [afAll, afSteal, afWorth, afSkip].forEach(b => b?.classList.remove('active'));
+      [afQualified, afAll, afSteal, afWorth, afSkip].forEach(b => b?.classList.remove('active'));
       btn.classList.add('active');
       agentVerdictFilter = btn.dataset.verdict;
       renderAgentDeals();
@@ -1414,6 +1622,24 @@
 
   if (agentDealsContainer) {
     agentDealsContainer.addEventListener('click', e => {
+      const feedbackBtn = e.target.closest('.deal-feedback-btn');
+      if (feedbackBtn) {
+        const dealId = feedbackBtn.dataset.dealId;
+        const action = feedbackBtn.dataset.action;
+        handleFeedbackClick(dealId, action, feedbackBtn);
+        return;
+      }
+
+      const histBtn = e.target.closest('.deal-history-btn');
+      if (histBtn) {
+        const dealId = histBtn.dataset.dealId;
+        const title = histBtn.dataset.title;
+        const mrp = parseFloat(histBtn.dataset.mrp) || 0;
+        const price = parseFloat(histBtn.dataset.price) || 0;
+        showPriceHistory(dealId, title, mrp, price);
+        return;
+      }
+
       const ignoreBtn = e.target.closest('.deal-ignore-btn');
       if (ignoreBtn) {
         const dealId = ignoreBtn.dataset.dealId;
@@ -1429,8 +1655,647 @@
     });
   }
 
+  // ── Price History Modal & Canvas Chart ──────────────────────────────────────
+  const priceHistoryModal = document.getElementById('priceHistoryModal');
+  const btnCloseHistoryModal = document.getElementById('btnCloseHistoryModal');
+  const historyModalTitle = document.getElementById('historyModalTitle');
+  const historyModalSubtitle = document.getElementById('historyModalSubtitle');
+  const histMinPrice = document.getElementById('histMinPrice');
+  const histCurrentPrice = document.getElementById('histCurrentPrice');
+  const histMrp = document.getElementById('histMrp');
+  const priceHistoryChart = document.getElementById('priceHistoryChart');
+  const historyTableBody = document.getElementById('historyTableBody');
+
+  if (btnCloseHistoryModal) {
+    btnCloseHistoryModal.addEventListener('click', () => {
+      if (priceHistoryModal) priceHistoryModal.style.display = 'none';
+    });
+  }
+
+  if (priceHistoryModal) {
+    priceHistoryModal.addEventListener('click', e => {
+      if (e.target === priceHistoryModal) priceHistoryModal.style.display = 'none';
+    });
+  }
+
+  async function showPriceHistory(dealId, title, mrp, currentPrice) {
+    if (!priceHistoryModal) return;
+    if (historyModalTitle) historyModalTitle.textContent = title || 'Price History';
+    if (historyModalSubtitle) historyModalSubtitle.textContent = `Product ID: ${dealId}`;
+    if (histCurrentPrice) histCurrentPrice.textContent = `₹${Number(currentPrice || 0).toLocaleString('en-IN')}`;
+    if (histMrp) histMrp.textContent = mrp ? `₹${Number(mrp).toLocaleString('en-IN')}` : 'N/A';
+    if (historyTableBody) {
+      historyTableBody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:16px;">Loading price data...</td></tr>';
+    }
+    priceHistoryModal.style.display = 'flex';
+
+    try {
+      const res = await fetch(`/api/deals/history?deal_id=${encodeURIComponent(dealId)}`);
+      const data = await res.json();
+      let history = data.history || [];
+
+      if (history.length === 0) {
+        history = [{
+          recorded_at: new Date().toISOString(),
+          sale_price: currentPrice || 0,
+          discount_pct: mrp && currentPrice ? Math.round(((mrp - currentPrice) / mrp) * 100) : 0,
+        }];
+      }
+
+      const minP = Math.min(...history.map(h => Number(h.sale_price)));
+      if (histMinPrice) histMinPrice.textContent = `₹${minP.toLocaleString('en-IN')}`;
+
+      if (historyTableBody) {
+        historyTableBody.innerHTML = history.slice().reverse().map(h => {
+          let t = h.recorded_at;
+          try {
+            const dt = new Date(h.recorded_at);
+            t = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+          } catch {}
+          return `
+            <tr>
+              <td>${escapeHtml(t)}</td>
+              <td><strong>₹${Number(h.sale_price).toLocaleString('en-IN')}</strong></td>
+              <td>${h.discount_pct ? `${Math.round(h.discount_pct)}% OFF` : '-'}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      drawPriceChart(priceHistoryChart, history);
+    } catch (err) {
+      if (historyTableBody) {
+        historyTableBody.innerHTML = `<tr><td colspan="3" class="text-danger" style="text-align:center;">Failed to load history: ${err.message}</td></tr>`;
+      }
+    }
+  }
+
+  function drawPriceChart(canvas, history) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width || 600;
+    const height = 220;
+
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    ctx.clearRect(0, 0, width, height);
+
+    if (!history || history.length === 0) return;
+
+    const padding = { top: 20, right: 30, bottom: 35, left: 60 };
+    const chartW = width - padding.left - padding.right;
+    const chartH = height - padding.top - padding.bottom;
+
+    const prices = history.map(h => Number(h.sale_price));
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const priceRange = (maxPrice - minPrice) || (maxPrice * 0.1) || 100;
+    const yMin = Math.max(0, minPrice - priceRange * 0.15);
+    const yMax = maxPrice + priceRange * 0.15;
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.lineWidth = 1;
+    const gridSteps = 4;
+    for (let i = 0; i <= gridSteps; i++) {
+      const y = padding.top + (chartH / gridSteps) * i;
+      ctx.beginPath();
+      ctx.moveTo(padding.left, y);
+      ctx.lineTo(width - padding.right, y);
+      ctx.stroke();
+
+      const priceVal = Math.round(yMax - ((yMax - yMin) / gridSteps) * i);
+      ctx.fillStyle = '#64748b';
+      ctx.font = '11px JetBrains Mono, monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`₹${priceVal.toLocaleString('en-IN')}`, padding.left - 8, y + 4);
+    }
+
+    const pts = history.map((h, i) => {
+      const x = history.length === 1
+        ? padding.left + chartW / 2
+        : padding.left + (chartW / (history.length - 1)) * i;
+      const y = padding.top + chartH - ((h.sale_price - yMin) / (yMax - yMin)) * chartH;
+      return { x, y, price: h.sale_price, date: h.recorded_at };
+    });
+
+    if (pts.length > 1) {
+      const gradient = ctx.createLinearGradient(0, padding.top, 0, padding.top + chartH);
+      gradient.addColorStop(0, 'rgba(56, 189, 248, 0.35)');
+      gradient.addColorStop(1, 'rgba(56, 189, 248, 0.0)');
+
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, padding.top + chartH);
+      pts.forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.lineTo(pts[pts.length - 1].x, padding.top + chartH);
+      ctx.closePath();
+      ctx.fillStyle = gradient;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.moveTo(pts[0].x, pts[0].y);
+      pts.forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+    }
+
+    pts.forEach((p, idx) => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#38bdf8';
+      ctx.fill();
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      if (idx === 0 || idx === pts.length - 1 || history.length <= 4) {
+        try {
+          const dt = new Date(p.date);
+          const lbl = `${dt.getDate()}/${dt.getMonth() + 1}`;
+          ctx.fillStyle = '#94a3b8';
+          ctx.font = '10px Inter, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(lbl, p.x, height - 10);
+        } catch {}
+      }
+    });
+  }
+
+  // ── Price Trackers Management (V2) ──────────────────────────────────────────
+  let allTrackers = [];
+  let currentTrackerFilter = 'all';
+  let candidateProducts = [];
+
+  const trackersContainer = document.getElementById('trackersContainer');
+  const trackersEmptyState = document.getElementById('trackersEmptyState');
+  const btnCheckTrackersNow = document.getElementById('btnCheckTrackersNow');
+  const trackerCheckSpinner = document.getElementById('trackerCheckSpinner');
+  const trackerCheckBtnIcon = document.getElementById('trackerCheckBtnIcon');
+  const trackerCheckBtnText = document.getElementById('trackerCheckBtnText');
+  const btnRefreshTrackers = document.getElementById('btnRefreshTrackers');
+
+  const trackerInputQuery = document.getElementById('trackerInputQuery');
+  const trackerInputTargetPrice = document.getElementById('trackerInputTargetPrice');
+  const trackerInputSize = document.getElementById('trackerInputSize');
+  const trackerInputInterval = document.getElementById('trackerInputInterval');
+  const trackerInputLimit = document.getElementById('trackerInputLimit');
+  const btnPreviewCandidates = document.getElementById('btnPreviewCandidates');
+  const btnDirectTrack = document.getElementById('btnDirectTrack');
+  const previewSpinner = document.getElementById('previewSpinner');
+  const previewBtnIcon = document.getElementById('previewBtnIcon');
+  const previewBtnText = document.getElementById('previewBtnText');
+
+  const trackerCandidatesBox = document.getElementById('trackerCandidatesBox');
+  const candidatesCount = document.getElementById('candidatesCount');
+  const candidatesGrid = document.getElementById('candidatesGrid');
+  const btnSelectAllCandidates = document.getElementById('btnSelectAllCandidates');
+  const btnTrackSelected = document.getElementById('btnTrackSelected');
+  const btnCloseCandidates = document.getElementById('btnCloseCandidates');
+
+  const tfAll = document.getElementById('tf-all');
+  const tfActive = document.getElementById('tf-active');
+  const tfPaused = document.getElementById('tf-paused');
+  const tfHit = document.getElementById('tf-hit');
+  const tfCountAll = document.getElementById('tfCountAll');
+  const tfCountActive = document.getElementById('tfCountActive');
+  const tfCountPaused = document.getElementById('tfCountPaused');
+  const tfCountHit = document.getElementById('tfCountHit');
+
+  async function loadTrackers() {
+    try {
+      const res = await fetch('/api/trackers');
+      const data = await res.json();
+      allTrackers = data.trackers || [];
+
+      const activeCount = allTrackers.filter(t => t.status === 'ACTIVE').length;
+      const pausedCount = allTrackers.filter(t => t.status === 'PAUSED').length;
+      const hitCount = allTrackers.filter(t => t.status === 'TRIGGERED' || t.status === 'HIT').length;
+
+      if (tfCountAll) tfCountAll.textContent = allTrackers.length;
+      if (tfCountActive) tfCountActive.textContent = activeCount;
+      if (tfCountPaused) tfCountPaused.textContent = pausedCount;
+      if (tfCountHit) tfCountHit.textContent = hitCount;
+      if (tabTrackersBadge) tabTrackersBadge.textContent = activeCount;
+
+      renderTrackers();
+    } catch (err) {
+      if (trackersContainer) {
+        trackersContainer.innerHTML = `<div class="empty-state"><p class="text-danger">Failed to load trackers: ${err.message}</p></div>`;
+      }
+    }
+  }
+
+  function renderTrackers() {
+    if (!trackersContainer) return;
+
+    let filtered = allTrackers.filter(t => {
+      if (currentTrackerFilter === 'all') return true;
+      if (currentTrackerFilter === 'HIT' || currentTrackerFilter === 'TRIGGERED') {
+        return t.status === 'TRIGGERED' || t.status === 'HIT';
+      }
+      return t.status === currentTrackerFilter;
+    });
+
+    if (filtered.length === 0) {
+      trackersContainer.style.display = 'none';
+      if (trackersEmptyState) {
+        trackersEmptyState.style.display = 'block';
+        trackersEmptyState.querySelector('h3').textContent = currentTrackerFilter === 'all'
+          ? 'No price trackers configured'
+          : `No ${currentTrackerFilter.toLowerCase()} trackers`;
+      }
+      return;
+    }
+
+    if (trackersEmptyState) trackersEmptyState.style.display = 'none';
+    trackersContainer.style.display = 'grid';
+
+    trackersContainer.innerHTML = filtered.map(t => {
+      const isHit = t.status === 'TRIGGERED' || t.status === 'HIT';
+      const isPaused = t.status === 'PAUSED';
+      const statusClass = isHit ? 'hit' : (isPaused ? 'paused' : 'active');
+      const statusIcon = isHit ? '✨' : (isPaused ? '⏸️' : '●');
+      const statusLabel = isHit ? 'TARGET HIT' : escapeHtml(t.status);
+      const targetP = Math.round(t.target_price || 0);
+      const currentP = t.current_price ? Math.round(t.current_price) : null;
+
+      let lastCheckedStr = 'Never';
+      const lastCheckedVal = t.last_checked || t.last_checked_at;
+      if (lastCheckedVal) {
+        try {
+          const dt = new Date(lastCheckedVal);
+          lastCheckedStr = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) + ' ' + dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        } catch {}
+      }
+
+      return `
+        <div class="tracker-card status-${statusClass}" id="tracker-${t.id}">
+          <div class="tracker-top-row">
+            ${getStoreBadgeHtml(t.source)}
+            <span class="tracker-status-badge ${statusClass}">${statusIcon} ${statusLabel}</span>
+          </div>
+
+          <div class="tracker-product-body">
+            ${t.image_url ? `
+              <img src="${escapeHtml(t.image_url)}" alt="${escapeHtml(t.title || '')}" class="tracker-thumb" loading="lazy" onerror="this.onerror=null; this.style.display='none';">
+            ` : ''}
+            <div class="tracker-product-info">
+              <h4 class="tracker-title" title="${escapeHtml(t.title || t.target_input)}">${escapeHtml(t.title || t.target_input)}</h4>
+              <div style="font-size:0.75rem; color:var(--text-dim); margin-top:2px;">
+                ${t.target_size ? `Size: <strong>${escapeHtml(t.target_size)}</strong> · ` : ''}Interval: ${t.check_interval || t.check_interval_mins || 30}m
+              </div>
+            </div>
+          </div>
+
+          <div class="tracker-pricing-bar">
+            <div>
+              <span style="font-size:0.75rem; color:var(--text-muted); display:block;">Target Price</span>
+              <span class="target-val">₹${targetP.toLocaleString('en-IN')}</span>
+            </div>
+            <div style="text-align: right;">
+              <span style="font-size:0.75rem; color:var(--text-muted); display:block;">Current Price</span>
+              <span class="current-val">${currentP ? `₹${currentP.toLocaleString('en-IN')}` : 'Pending'}</span>
+            </div>
+          </div>
+
+          <div class="tracker-meta-row">
+            <span>Checked: ${escapeHtml(lastCheckedStr)}</span>
+            <span>Triggered: ${t.alert_count || t.triggered_count || 0} times</span>
+          </div>
+
+          <div class="tracker-footer-actions">
+            ${t.product_url ? `
+              <a href="${escapeHtml(t.product_url)}" target="_blank" rel="noopener noreferrer" class="btn btn-sm btn-outline">View ↗</a>
+            ` : ''}
+            ${isPaused ? `
+              <button class="btn btn-sm btn-outline tracker-resume-btn" data-id="${t.id}" title="Resume monitoring">▶ Resume</button>
+            ` : `
+              <button class="btn btn-sm btn-outline tracker-pause-btn" data-id="${t.id}" title="Pause monitoring">⏸ Pause</button>
+            `}
+            <button class="btn btn-sm btn-outline tracker-delete-btn" data-id="${t.id}" style="color:#f87171;" title="Delete tracker">🗑 Delete</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  // Filter tab buttons
+  [tfAll, tfActive, tfPaused, tfHit].forEach(btn => {
+    if (!btn) return;
+    btn.addEventListener('click', () => {
+      [tfAll, tfActive, tfPaused, tfHit].forEach(b => b?.classList.remove('active'));
+      btn.classList.add('active');
+      currentTrackerFilter = btn.dataset.status;
+      renderTrackers();
+    });
+  });
+
+  if (btnRefreshTrackers) {
+    btnRefreshTrackers.addEventListener('click', () => {
+      loadTrackers();
+      showToast('Trackers list refreshed', 'info');
+    });
+  }
+
+  // Tracker Card Action Delegation
+  if (trackersContainer) {
+    trackersContainer.addEventListener('click', async e => {
+      const pauseBtn = e.target.closest('.tracker-pause-btn');
+      if (pauseBtn) {
+        const id = pauseBtn.dataset.id;
+        try {
+          const res = await fetch(`/api/trackers/${id}/pause`, { method: 'POST' });
+          if (res.ok) {
+            showToast('Tracker paused', 'info');
+            loadTrackers();
+          }
+        } catch (err) {
+          showToast('Failed to pause: ' + err.message, 'error');
+        }
+        return;
+      }
+
+      const resumeBtn = e.target.closest('.tracker-resume-btn');
+      if (resumeBtn) {
+        const id = resumeBtn.dataset.id;
+        try {
+          const res = await fetch(`/api/trackers/${id}/resume`, { method: 'POST' });
+          if (res.ok) {
+            showToast('Tracker resumed', 'success');
+            loadTrackers();
+          }
+        } catch (err) {
+          showToast('Failed to resume: ' + err.message, 'error');
+        }
+        return;
+      }
+
+      const deleteBtn = e.target.closest('.tracker-delete-btn');
+      if (deleteBtn) {
+        const id = deleteBtn.dataset.id;
+        if (!confirm('Are you sure you want to delete this price tracker?')) return;
+        try {
+          const res = await fetch(`/api/trackers/${id}`, { method: 'DELETE' });
+          if (res.ok) {
+            showToast('Tracker deleted', 'info');
+            loadTrackers();
+          }
+        } catch (err) {
+          showToast('Failed to delete: ' + err.message, 'error');
+        }
+        return;
+      }
+    });
+  }
+
+  // Check All Trackers Now
+  if (btnCheckTrackersNow) {
+    btnCheckTrackersNow.addEventListener('click', async () => {
+      btnCheckTrackersNow.disabled = true;
+      if (trackerCheckSpinner) trackerCheckSpinner.style.display = 'inline-block';
+      if (trackerCheckBtnIcon) trackerCheckBtnIcon.style.display = 'none';
+      if (trackerCheckBtnText) trackerCheckBtnText.textContent = 'Checking...';
+
+      try {
+        const res = await fetch('/api/trackers/check', { method: 'POST' });
+        const data = await res.json();
+        if (res.ok) {
+          showToast(`Checked ${data.checked || 0} trackers. ${data.alerts || 0} alerts sent!`, 'success');
+          loadTrackers();
+        } else {
+          showToast(data.detail || 'Tracker check failed', 'error');
+        }
+      } catch (err) {
+        showToast('Error checking trackers: ' + err.message, 'error');
+      } finally {
+        btnCheckTrackersNow.disabled = false;
+        if (trackerCheckSpinner) trackerCheckSpinner.style.display = 'none';
+        if (trackerCheckBtnIcon) trackerCheckBtnIcon.style.display = 'inline-block';
+        if (trackerCheckBtnText) trackerCheckBtnText.textContent = 'Check All Trackers';
+      }
+    });
+  }
+
+  // Update search button text when limit dropdown changes
+  if (trackerInputLimit) {
+    trackerInputLimit.addEventListener('change', () => {
+      const lim = trackerInputLimit.value || '20';
+      if (previewBtnText) previewBtnText.textContent = `Search Preview (${lim})`;
+    });
+  }
+
+  // Candidate Preview Search
+  if (btnPreviewCandidates) {
+    btnPreviewCandidates.addEventListener('click', async () => {
+      const q = (trackerInputQuery?.value || '').trim();
+      if (!q) {
+        showToast('Enter a keyword or product URL to search', 'warning');
+        return;
+      }
+
+      const limit = parseInt(trackerInputLimit?.value || '20', 10);
+      btnPreviewCandidates.disabled = true;
+      if (previewSpinner) previewSpinner.style.display = 'inline-block';
+      if (previewBtnIcon) previewBtnIcon.style.display = 'none';
+      if (previewBtnText) previewBtnText.textContent = 'Searching...';
+
+      try {
+        const res = await fetch(`/api/trackers/search?keyword=${encodeURIComponent(q)}&limit=${limit}&force_scrape=true`);
+        const data = await res.json();
+        candidateProducts = data.candidates || [];
+
+        if (candidatesCount) candidatesCount.textContent = candidateProducts.length;
+
+        if (candidateProducts.length === 0) {
+          showToast('No candidates found matching that query', 'info');
+          if (trackerCandidatesBox) trackerCandidatesBox.style.display = 'none';
+        } else {
+          renderCandidatesGrid();
+          if (trackerCandidatesBox) trackerCandidatesBox.style.display = 'block';
+          showToast(`Found ${candidateProducts.length} candidate products`, 'success');
+        }
+      } catch (err) {
+        showToast('Error searching candidates: ' + err.message, 'error');
+      } finally {
+        btnPreviewCandidates.disabled = false;
+        if (previewSpinner) previewSpinner.style.display = 'none';
+        if (previewBtnIcon) previewBtnIcon.style.display = 'inline-block';
+        if (previewBtnText) previewBtnText.textContent = `Search Preview (${limit})`;
+      }
+    });
+  }
+
+  function renderCandidatesGrid() {
+    if (!candidatesGrid) return;
+    const defaultTarget = parseFloat(trackerInputTargetPrice?.value) || null;
+
+    candidatesGrid.innerHTML = candidateProducts.map((c, idx) => {
+      const saleP = Math.round(c.sale_price || 0);
+      const mrp = Math.round(c.original_price || 0);
+      const suggestedTarget = defaultTarget || Math.round(saleP * 0.9);
+
+      return `
+        <div class="candidate-card selected" id="candidate-${idx}">
+          <div class="candidate-top">
+            <input type="checkbox" class="candidate-checkbox" data-idx="${idx}" checked>
+            ${c.image_url ? `
+              <img src="${escapeHtml(c.image_url)}" alt="${escapeHtml(c.title)}" class="candidate-thumb" loading="lazy" onerror="this.onerror=null; this.style.display='none';">
+            ` : ''}
+            <div class="candidate-info">
+              <div class="candidate-brand">${escapeHtml(c.brand || c.source)}</div>
+              <h4 class="candidate-title" title="${escapeHtml(c.title)}">${escapeHtml(c.title)}</h4>
+              <div class="candidate-price-row">
+                <span class="candidate-sale-price">₹${saleP.toLocaleString('en-IN')}</span>
+                ${mrp > saleP ? `<span class="candidate-mrp">₹${mrp.toLocaleString('en-IN')}</span>` : ''}
+              </div>
+            </div>
+          </div>
+          <div class="candidate-bottom-row">
+            <span style="font-size:0.75rem; color:var(--text-muted);">Target:</span>
+            <input type="number" class="text-input candidate-target-input" id="cand-target-${idx}" value="${suggestedTarget}" min="1">
+            <a href="${escapeHtml(c.product_url)}" target="_blank" rel="noopener noreferrer" style="font-size:0.75rem; color:var(--accent-cyan);">View ↗</a>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  if (candidatesGrid) {
+    candidatesGrid.addEventListener('change', e => {
+      const chk = e.target.closest('.candidate-checkbox');
+      if (chk) {
+        const card = chk.closest('.candidate-card');
+        if (card) {
+          card.classList.toggle('selected', chk.checked);
+        }
+      }
+    });
+  }
+
+  if (btnSelectAllCandidates) {
+    btnSelectAllCandidates.addEventListener('click', () => {
+      const chks = candidatesGrid?.querySelectorAll('.candidate-checkbox') || [];
+      const anyUnchecked = Array.from(chks).some(c => !c.checked);
+      chks.forEach(c => {
+        c.checked = anyUnchecked;
+        c.closest('.candidate-card')?.classList.toggle('selected', anyUnchecked);
+      });
+      btnSelectAllCandidates.textContent = anyUnchecked ? 'Deselect All' : 'Select All';
+    });
+  }
+
+  if (btnCloseCandidates) {
+    btnCloseCandidates.addEventListener('click', () => {
+      if (trackerCandidatesBox) trackerCandidatesBox.style.display = 'none';
+    });
+  }
+
+  // Track Selected Items
+  if (btnTrackSelected) {
+    btnTrackSelected.addEventListener('click', async () => {
+      const chks = candidatesGrid?.querySelectorAll('.candidate-checkbox:checked') || [];
+      if (chks.length === 0) {
+        showToast('Select at least one product to track', 'warning');
+        return;
+      }
+
+      btnTrackSelected.disabled = true;
+      btnTrackSelected.textContent = 'Creating Trackers...';
+
+      let createdCount = 0;
+      const intervalMins = parseInt(trackerInputInterval?.value || '30', 10);
+      const targetSize = (trackerInputSize?.value || '').trim() || null;
+
+      for (const chk of chks) {
+        const idx = parseInt(chk.dataset.idx, 10);
+        const c = candidateProducts[idx];
+        if (!c) continue;
+
+        const targetInputEl = document.getElementById(`cand-target-${idx}`);
+        const targetPrice = parseFloat(targetInputEl?.value) || Math.round(c.sale_price * 0.9);
+
+        try {
+          const res = await fetch('/api/trackers', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              target_input: c.product_url,
+              target_price: targetPrice,
+              target_size: targetSize,
+              target_type: 'ANY',
+              check_interval: intervalMins,
+            }),
+          });
+          if (res.ok) createdCount++;
+        } catch (err) {
+          console.warn('Tracker create error', err);
+        }
+      }
+
+      btnTrackSelected.disabled = false;
+      btnTrackSelected.textContent = 'Track Selected Items';
+      if (trackerCandidatesBox) trackerCandidatesBox.style.display = 'none';
+
+      showToast(`Created ${createdCount} price trackers successfully!`, 'success');
+      loadTrackers();
+    });
+  }
+
+  // Quick Direct Track
+  if (btnDirectTrack) {
+    btnDirectTrack.addEventListener('click', async () => {
+      const q = (trackerInputQuery?.value || '').trim();
+      const price = parseFloat(trackerInputTargetPrice?.value);
+      if (!q) {
+        showToast('Enter a URL or search keyword', 'warning');
+        return;
+      }
+      if (!price || price <= 0) {
+        showToast('Enter a valid target price (₹)', 'warning');
+        return;
+      }
+
+      btnDirectTrack.disabled = true;
+      btnDirectTrack.textContent = 'Adding...';
+
+      try {
+        const res = await fetch('/api/trackers', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            target_input: q,
+            target_price: price,
+            target_size: (trackerInputSize?.value || '').trim() || null,
+            target_type: 'ANY',
+            check_interval: parseInt(trackerInputInterval?.value || '30', 10),
+          }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+          showToast('Tracker created successfully!', 'success');
+          if (trackerInputQuery) trackerInputQuery.value = '';
+          if (trackerInputTargetPrice) trackerInputTargetPrice.value = '';
+          loadTrackers();
+        } else {
+          showToast(data.detail || 'Failed to create tracker', 'error');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      } finally {
+        btnDirectTrack.disabled = false;
+        btnDirectTrack.textContent = '+ Quick Add';
+      }
+    });
+  }
+
   // Initialize
   loadDeals();
+  loadTrackers();
   loadConfig();
   pollStatus();
   setInterval(pollStatus, 2000);
