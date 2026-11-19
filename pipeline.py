@@ -28,9 +28,10 @@ from scrapers import MyntraScraper, FlipkartScraper, TataCliqScraper
 from scrapers.base import Deal, BaseScraper
 from notifier import notify_macos, notify_telegram
 
+from core.config import load_config as _load_core_config
+
 # ── Paths ──────────────────────────────────────────────────────────────────────
 ROOT = Path(__file__).parent
-CONFIG_PATH = ROOT / "config.json"
 SEEN_DEALS_PATH = ROOT / "seen_deals.json"
 IGNORED_DEALS_PATH = ROOT / "ignored_deals.json"
 
@@ -39,8 +40,7 @@ console = Console()
 
 # ── Config ─────────────────────────────────────────────────────────────────────
 def load_config() -> dict:
-    with open(CONFIG_PATH) as f:
-        return json.load(f)
+    return _load_core_config()
 
 
 # ── Ignored-deals store ────────────────────────────────────────────────────────
@@ -228,7 +228,7 @@ def passes_watchlist(deal: Deal, cfg: dict, overrides: dict | None = None) -> bo
     wl = cfg.get("watchlist", {})
     ovr = overrides or {}
 
-    brands = ovr.get("brands", wl.get("brands", []))
+    brands = ovr["brands"] if "brands" in ovr else wl.get("brands", [])
     brands_lower = [b.lower() for b in brands]
     target_sizes = set(str(s).upper() for s in ovr.get("target_sizes", wl.get("target_sizes", [])))
 
@@ -258,8 +258,17 @@ def passes_watchlist(deal: Deal, cfg: dict, overrides: dict | None = None) -> bo
     # If no sizes were found (scraper couldn't extract them), we let it through
     # and flag it as "size unknown" in the table.
     if target_sizes and deal.available_sizes:
-        deal_sizes = set(str(s).upper() for s in deal.available_sizes)
-        if not deal_sizes.intersection(target_sizes):
+        def _norm_s(x):
+            s = str(x).upper().replace("UK", "").replace("US", "").replace("EU", "").strip()
+            try:
+                f = float(s)
+                return str(int(f)) if f.is_integer() else f"{f:.1f}"
+            except ValueError:
+                return s
+
+        deal_sizes = {_norm_s(s) for s in deal.available_sizes}
+        req_sizes = {_norm_s(s) for s in target_sizes}
+        if not deal_sizes.intersection(req_sizes):
             return False  # size definitely not available
 
     return True
@@ -323,9 +332,11 @@ def build_scrapers(cfg: dict, names: list[str] | None = None) -> list[BaseScrape
         delay=sc["request_delay_sec"],
         timeout=sc["timeout_sec"],
         max_retries=sc["max_retries"],
+        pincode=str(cfg.get("pincode", "110009")).strip(),
     )
     use_pw        = sc.get("use_playwright", False)
     fetch_wow     = sc.get("fetch_wow_price", False)
+    pincode       = opts["pincode"]
 
     fk_cookies = (
         cfg.get("flipkart_cookies")
@@ -489,8 +500,8 @@ def run(queries: list[str | dict], scraper_names: list[str] | None, dry_run: boo
                     if not passes_watchlist(deal, cfg, q_overrides):
                         continue
 
-                    # Enrich Flipkart deal with in-stock sizes and exact WOW deal price from PDP
-                    if scraper.name == "flipkart" and cfg.get("scraper", {}).get("fetch_wow_price", True):
+                    # Enrich Flipkart deal with in-stock sizes and exact WOW deal price from PDP (limit to avoid blocking)
+                    if scraper.name == "flipkart" and cfg.get("scraper", {}).get("fetch_wow_pdp", False) and len(all_deals) < 5:
                         scraper.enrich_deal(deal)
                         if not passes_watchlist(deal, cfg, q_overrides):
                             continue

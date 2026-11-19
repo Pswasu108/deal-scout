@@ -34,17 +34,23 @@ API_EXTRA_HEADERS = {
 class TataCliqScraper(BaseScraper):
     name = "tatacliq"
 
-    def __init__(self, delay: float = 2.0, timeout: int = 15, max_retries: int = 3):
+    def __init__(self, delay: float = 2.0, timeout: int = 15, max_retries: int = 3, pincode: str = "110009"):
         self.delay = delay
         self.timeout = timeout
         self.max_retries = max_retries
+        self.pincode = str(pincode or "110009").strip()
 
     def scrape(self, query: str, max_products: int = 40, max_pages: int | None = None) -> list[Deal]:
         if max_pages is None:
             max_pages = max(1, (max_products + 39) // 40)
 
+        headers = dict(API_EXTRA_HEADERS)
+        if self.pincode:
+            headers["Cookie"] = f"pincode={self.pincode}"
+            headers["x-pincode"] = self.pincode
+
         # Use persistent client to share cookies across requests
-        with make_client(extra_headers=API_EXTRA_HEADERS, timeout=self.timeout) as client:
+        with make_client(extra_headers=headers, timeout=self.timeout) as client:
             # Step 1: warm up session
             try:
                 client.get(HOME_URL)
@@ -67,14 +73,28 @@ class TataCliqScraper(BaseScraper):
                         continue
                 break
 
-            if all_deals:
-                return all_deals[:max_products]
-
             # Step 3: fallback to HTML listing
             listing_url = LISTING_URL.format(query=query.replace(" ", "+"))
             html = self._fetch_html(client, listing_url)
-            if html:
-                return self._parse_html(html)[:max_products]
+            parsed_html = self._parse_html(html)[:max_products] if html else []
+
+            out_deals = (all_deals[:max_products]) if all_deals else parsed_html
+            if out_deals:
+                from concurrent.futures import ThreadPoolExecutor
+                from scrapers.playwright_scraper import fetch_tatacliq_sizes
+
+                def _enrich(d: Deal):
+                    if not d.available_sizes and "/p-" in d.product_url:
+                        slug = d.product_url.strip("/").split("/p-")[-1].split("?")[0].split("#")[0].strip("/")
+                        if slug:
+                            extracted = fetch_tatacliq_sizes(slug)
+                            if extracted:
+                                d.available_sizes = extracted
+
+                with ThreadPoolExecutor(max_workers=8) as pool:
+                    list(pool.map(_enrich, out_deals))
+
+            return out_deals
 
         return []
 

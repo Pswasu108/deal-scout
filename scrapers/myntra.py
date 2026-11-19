@@ -23,15 +23,24 @@ HEADERS_EXTRA = {"Referer": "https://www.myntra.com/"}
 class MyntraScraper(BaseScraper):
     name = "myntra"
 
-    def __init__(self, delay: float = 2.0, timeout: int = 15, max_retries: int = 3):
+    def __init__(self, delay: float = 2.0, timeout: int = 15, max_retries: int = 3, pincode: str = "110009", **kwargs):
         self.delay = delay
         self.timeout = timeout
         self.max_retries = max_retries
+        self.pincode = str(pincode or "110009").strip()
 
-    def scrape(self, query: str, max_products: int = 40, max_pages: int | None = None) -> list[Deal]:
+    def scrape(
+        self,
+        query: str,
+        max_products: int = 40,
+        max_pages: int | None = None,
+        brands: list[str] | None = None,
+    ) -> list[Deal]:
+        import urllib.parse
         if max_pages is None:
-            max_pages = max(1, (max_products + 39) // 40)
+            max_pages = max(2, (max_products + 31) // 32)
         slug = query.strip().lower().replace(" ", "-")
+
         all_deals: list[Deal] = []
         for page in range(1, max_pages + 1):
             url = f"{SEARCH_URL.format(slug=slug)}?p={page}"
@@ -47,9 +56,13 @@ class MyntraScraper(BaseScraper):
         return all_deals[:max_products]
 
     def _fetch(self, url: str) -> str | None:
+        headers = dict(HEADERS_EXTRA)
+        if self.pincode:
+            headers["Cookie"] = f"pincode={self.pincode}"
+            headers["x-pincode"] = self.pincode
         for attempt in range(self.max_retries):
             try:
-                with make_client(extra_headers=HEADERS_EXTRA, timeout=self.timeout) as client:
+                with make_client(extra_headers=headers, timeout=self.timeout) as client:
                     resp = client.get(url)
                     if resp.status_code == 200:
                         return resp.text

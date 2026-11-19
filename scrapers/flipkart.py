@@ -48,19 +48,24 @@ class FlipkartScraper(BaseScraper):
         max_retries: int = 3,
         fetch_wow_price: bool = True,
         cookies: str = "",
+        pincode: str = "110009",
     ):
         self.delay       = delay
         self.timeout     = timeout
         self.max_retries = max_retries
         self.fetch_wow   = fetch_wow_price
         self.cookies     = cookies.strip()
+        self.pincode     = str(pincode or "110009").strip()
         self._clients: dict[str, any] = {}
 
     def _get_client(self, ua: str):
         if ua not in self._clients:
             headers = {"User-Agent": ua, "Accept-Language": "en-IN,en;q=0.9"}
-            if self.cookies:
-                headers["Cookie"] = self.cookies
+            cookie_str = self.cookies
+            if self.pincode and "pincode=" not in cookie_str:
+                cookie_str = f"pincode={self.pincode}; {cookie_str}".strip(" ;")
+            if cookie_str:
+                headers["Cookie"] = cookie_str
             self._clients[ua] = make_client(extra_headers=headers, timeout=self.timeout)
         return self._clients[ua]
 

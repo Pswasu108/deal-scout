@@ -21,14 +21,20 @@ except ImportError:
 class PlaywrightMyntraScraper(BaseScraper):
     name = "myntra"
 
-    def __init__(self, delay: float = 2.0, **kwargs):
+    def __init__(self, delay: float = 2.0, pincode: str = "110009", **kwargs):
         self.delay = delay
+        self.pincode = str(pincode or "110009").strip()
 
-    def scrape(self, query: str, max_products: int = 40, max_pages: int | None = None) -> list[Deal]:
+    def scrape(self, query: str, max_products: int = 40, max_pages: int | None = None, **kwargs) -> list[Deal]:
         # Fast HTTP path: Myntra embeds full state in window.__myx, bypassing Akamai browser blocks
         try:
             from .myntra import MyntraScraper
-            deals = MyntraScraper(**self.__dict__).scrape(query, max_products=max_products, max_pages=max_pages)
+            deals = MyntraScraper(**self.__dict__).scrape(
+                query,
+                max_products=max_products,
+                max_pages=max_pages,
+                brands=kwargs.get("brands"),
+            )
             if deals:
                 return deals
         except Exception:
@@ -53,6 +59,11 @@ class PlaywrightMyntraScraper(BaseScraper):
                 ),
                 locale="en-IN",
             )
+            if self.pincode:
+                try:
+                    ctx.add_cookies([{"name": "pincode", "value": self.pincode, "domain": ".myntra.com", "path": "/"}])
+                except Exception:
+                    pass
             page = ctx.new_page()
             try:
                 page.goto(url, wait_until="networkidle", timeout=30000)
@@ -107,8 +118,9 @@ class PlaywrightMyntraScraper(BaseScraper):
 class PlaywrightTataCliqScraper(BaseScraper):
     name = "tatacliq"
 
-    def __init__(self, delay: float = 2.0, **kwargs):
+    def __init__(self, delay: float = 2.0, pincode: str = "110009", **kwargs):
         self.delay = delay
+        self.pincode = str(pincode or "110009").strip()
 
     def scrape(self, query: str, max_products: int = 40, max_pages: int | None = None) -> list[Deal]:
         if not _PLAYWRIGHT_AVAILABLE:
@@ -159,6 +171,11 @@ class PlaywrightTataCliqScraper(BaseScraper):
                 ),
                 locale="en-IN",
             )
+            if self.pincode:
+                try:
+                    ctx.add_cookies([{"name": "pincode", "value": self.pincode, "domain": ".tatacliq.com", "path": "/"}])
+                except Exception:
+                    pass
             page = ctx.new_page()
             page.on("response", _on_response)
             try:
@@ -169,16 +186,24 @@ class PlaywrightTataCliqScraper(BaseScraper):
                     pass
 
                 # Paginate by clicking 'Show More Products' if needed
-                while True:
+                prev_count = 0
+                max_clicks = 4
+                clicks = 0
+                while clicks < max_clicks:
                     cards = page.query_selector_all("[class*='ProductModule__base']")
                     if len(cards) >= max_products:
                         break
+                    if len(cards) <= prev_count and clicks > 0:
+                        break
+                    prev_count = len(cards)
+
                     show_more_btn = page.query_selector("[class*='ShowMoreButtonPlp__button']")
                     if not show_more_btn or not show_more_btn.is_visible():
                         break
                     try:
                         show_more_btn.click()
-                        time.sleep(2)
+                        clicks += 1
+                        time.sleep(1.5)
                     except Exception:
                         break
 
@@ -292,5 +317,50 @@ class PlaywrightTataCliqScraper(BaseScraper):
                 print("  [playwright/tatacliq] page load timed out")
             finally:
                 browser.close()
+
+        # Enrich deals with real-time in-stock sizes from TataCLiQ productDetails API
+        if deals:
+            from concurrent.futures import ThreadPoolExecutor
+
+            def _enrich_sizes(d: Deal):
+                if "/p-" in d.product_url:
+                    slug = d.product_url.strip("/").split("/p-")[-1].split("?")[0].split("#")[0].strip("/")
+                    if slug:
+                        extracted = fetch_tatacliq_sizes(slug)
+                        if extracted:
+                            d.available_sizes = extracted
+
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                list(pool.map(_enrich_sizes, deals))
+
         return deals
+
+
+def fetch_tatacliq_sizes(product_id: str, pincode: str = "110009") -> list[str]:
+    """Fetch exact live in-stock sizes for a TataCLiQ product via productDetails API."""
+    clean_id = product_id.split("?")[0].split("#")[0].strip("/")
+    if "/p-" in clean_id:
+        clean_id = clean_id.split("/p-")[-1]
+    api_url = f"https://www.tatacliq.com/marketplacewebservices/v2/mpl/products/productDetails/{clean_id}?isPwa=true&isMDE=true&isDynamicVar=true"
+    try:
+        from scrapers.http_client import make_client
+        extra_headers = {"channel": "WEB", "Referer": "https://www.tatacliq.com/"}
+        if pincode:
+            extra_headers["Cookie"] = f"pincode={pincode}"
+            extra_headers["x-pincode"] = pincode
+        with make_client(extra_headers=extra_headers, timeout=8) as client:
+            r = client.get(api_url)
+            if r.status_code == 200:
+                data = r.json()
+                sizes = []
+                for vo in data.get("variantOptions", []):
+                    sl = vo.get("sizelink", {})
+                    if sl and sl.get("isAvailable"):
+                        sz = sl.get("brandSize") or sl.get("size")
+                        if sz and sz not in sizes:
+                            sizes.append(sz)
+                return sizes
+    except Exception:
+        pass
+    return []
 
